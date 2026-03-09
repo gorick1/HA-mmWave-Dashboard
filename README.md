@@ -39,22 +39,48 @@ A premium, real-time radar visualization card for Home Assistant Lovelace, desig
 
 ### HACS Method (Recommended)
 
-1. Open HACS in your Home Assistant instance
-2. Go to **Frontend** → click the **+** button
+1. Open **HACS** in your Home Assistant instance
+2. Go to **Frontend** → click the **⊕** (Add) button
 3. Search for **LD2450 Radar Card**
 4. Click **Download** and follow the prompts
-5. Restart Home Assistant
-6. Add the card to your dashboard via the card picker
+5. **Restart** Home Assistant (or reload the frontend resources)
+6. Open a dashboard, enter **Edit mode**, click **Add Card**, and search for
+   **LD2450 Radar Card** in the picker
 
 ### Manual Method
 
-1. Download `dist/ld2450-radar-card.js` from the [latest release](https://github.com/gorick1/HA-mmWave-Dashboard/releases/latest)
-2. Copy it to your HA config directory: `config/www/ld2450-radar-card.js`
-3. In Home Assistant, go to **Settings → Dashboards → Resources**
-4. Add a new resource:
-   - URL: `/local/ld2450-radar-card.js`
-   - Type: **JavaScript Module**
-5. Add the card to your dashboard
+1. Download `dist/ld2450-radar-card.js` from the
+   [latest release](https://github.com/gorick1/HA-mmWave-Dashboard/releases/latest)
+2. Copy it to your HA config directory:
+   ```
+   config/www/ld2450-radar-card.js
+   ```
+3. In Home Assistant go to **Settings → Dashboards → Resources**
+4. Click **Add Resource** and fill in:
+   - **URL:** `/local/ld2450-radar-card.js`
+   - **Resource type:** JavaScript Module
+5. **Hard-refresh** your browser (`Ctrl+Shift+R` / `Cmd+Shift+R`)
+6. Open a dashboard, enter **Edit mode**, click **Add Card**, and search for
+   **LD2450 Radar Card**
+
+### Selecting Your Device (Visual Editor)
+
+After adding the card you can configure it visually — **no YAML required**:
+
+1. When the card is first added HA opens the **card editor** automatically.
+   You can re-open it at any time by clicking the **✏️ pencil** icon on the card
+   in Edit mode.
+2. Under **Device**, either:
+   - **Type** your ESPHome device name directly into the *Device Name* field, **or**
+   - Use the **Auto-detect from entity** picker: click the field and select any
+     *Target X / Y / Speed* sensor that belongs to your LD2450 device
+     (e.g. `sensor.living_room_radar_target_1_x`). The device name is extracted
+     automatically and filled in for you.
+3. Optionally set a **Card Title** and adjust detection / display settings.
+4. Click **Save** — the card immediately starts streaming live radar data.
+
+> ℹ️ The entity picker shows every `sensor.*` entity in your HA instance.
+> Filter by typing part of your device name to narrow the list.
 
 ---
 
