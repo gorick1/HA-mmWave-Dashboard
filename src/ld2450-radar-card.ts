@@ -1,0 +1,827 @@
+import type {
+  CardConfig,
+  HomeAssistant,
+  EditMode,
+  ZoneConfig,
+  FurnitureConfig,
+  HistoryEntry,
+  Point,
+} from './types/index.js';
+import { RadarCanvas } from './components/RadarCanvas.js';
+import { TargetTracker } from './components/TargetTracker.js';
+import { FurnitureLayer } from './components/FurnitureLayer.js';
+import { ZoneEditor } from './components/ZoneEditor.js';
+import { ConfigEditor, generateZoneYaml } from './components/ConfigEditor.js';
+import { buildEntityIds, subscribeEntities, getNumericState } from './utils/ha-websocket.js';
+import { canvasToMm } from './utils/geometry.js';
+// @ts-expect-error CSS import via rollup-plugin-string
+import cardCss from './styles/card.css';
+
+const SENSOR_MARGIN = 40;
+
+const DEFAULT_CONFIG: CardConfig = {
+  type: 'custom:ld2450-radar-card',
+  title: 'LD2450 Radar',
+  device_name: 'radar',
+  max_range: 6000,
+  fov_angle: 120,
+  show_grid: true,
+  show_sweep: true,
+  show_trails: true,
+  trail_length: 12,
+  targets: [
+    { id: 1, color: '#38bdf8', label: 'T1' },
+    { id: 2, color: '#f472b6', label: 'T2' },
+    { id: 3, color: '#34d399', label: 'T3' },
+  ],
+  furniture: [],
+  zones: [],
+};
+
+/**
+ * LD2450 Radar Card — Custom Lovelace Card for Home Assistant.
+ */
+class LD2450RadarCard extends HTMLElement {
+  private _config: CardConfig = DEFAULT_CONFIG;
+  private _hass: HomeAssistant | null = null;
+  private _shadow: ShadowRoot;
+  private _radarCanvas: RadarCanvas | null = null;
+  private _tracker: TargetTracker | null = null;
+  private _furnitureLayer: FurnitureLayer | null = null;
+  private _zoneEditor: ZoneEditor | null = null;
+  private _configEditor: ConfigEditor | null = null;
+  private _unsubscribes: Array<() => void> = [];
+  private _rafId: number | null = null;
+  private _resizeObserver: ResizeObserver | null = null;
+  private _editMode: EditMode = 'none';
+  private _showSettings = false;
+  private _showYaml = false;
+  private _selectedFurnitureType: string | null = null;
+  private _isEditMode = false;
+  private _history: HistoryEntry[] = [];
+  private _historyIndex = -1;
+  private _zoneNamePending: ZoneConfig | null = null;
+  private _tickInterval: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    super();
+    this._shadow = this.attachShadow({ mode: 'open' });
+  }
+
+  // Called by HA to set the card config
+  setConfig(config: Partial<CardConfig>): void {
+    this._config = { ...DEFAULT_CONFIG, ...config };
+    // Ensure arrays have defaults
+    if (!this._config.targets || !this._config.targets.length) {
+      this._config.targets = DEFAULT_CONFIG.targets;
+    }
+    if (!this._config.furniture) this._config.furniture = [];
+    if (!this._config.zones) this._config.zones = [];
+    this._init();
+  }
+
+  set hass(hass: HomeAssistant) {
+    const firstSet = !this._hass;
+    this._hass = hass;
+    if (firstSet && this._tracker) {
+      // Load initial states from hass.states
+      this._loadInitialStates();
+    }
+    if (firstSet && this._unsubscribes.length === 0) {
+      void this._subscribeEntities();
+    }
+  }
+
+  connectedCallback(): void {
+    this._startRenderLoop();
+  }
+
+  disconnectedCallback(): void {
+    this._stopRenderLoop();
+    this._unsubAll();
+    this._resizeObserver?.disconnect();
+    if (this._tickInterval !== null) {
+      clearInterval(this._tickInterval);
+      this._tickInterval = null;
+    }
+    this._radarCanvas?.stopAnimation();
+  }
+
+  private _init(): void {
+    this._tracker = new TargetTracker(this._config);
+    this._furnitureLayer = new FurnitureLayer(this._config);
+    this._zoneEditor = new ZoneEditor(this._config);
+    this._configEditor = new ConfigEditor(this._config, this._onConfigPatch.bind(this));
+
+    this._zoneEditor.setOnZoneComplete((zone) => {
+      this._zoneNamePending = zone;
+      this._renderDOM();
+    });
+
+    this._renderDOM();
+    this._setupCanvas();
+
+    // Tick for inactive target detection
+    if (this._tickInterval !== null) clearInterval(this._tickInterval);
+    this._tickInterval = setInterval(() => {
+      this._tracker?.tick();
+    }, 500);
+  }
+
+  private _renderDOM(): void {
+    this._shadow.innerHTML = `
+      <style>${cardCss}</style>
+      <div class="card-container">
+        ${this._renderHeader()}
+        ${this._isEditMode ? this._renderEditToolbar() : ''}
+        <div class="card-body">
+          <div class="canvas-wrap" id="canvas-wrap">
+            <canvas id="radar-canvas" aria-label="Radar visualization"></canvas>
+            <div class="tooltip" id="coord-tooltip" style="display:none"></div>
+            ${this._zoneNamePending ? this._renderZoneNameDialog() : ''}
+            ${this._showSettings ? this._renderSettingsPanel() : ''}
+            ${this._showYaml ? this._renderYamlPanel() : ''}
+          </div>
+          ${this._renderSidebar()}
+        </div>
+      </div>
+    `;
+    this._attachEventListeners();
+  }
+
+  private _renderHeader(): string {
+    return `
+      <div class="card-header">
+        <div class="card-title">${this._config.title ?? 'LD2450 Radar'}</div>
+        <div class="header-actions">
+          <button class="icon-btn ${this._isEditMode ? 'active' : ''}" id="btn-edit" aria-label="Toggle edit mode">
+            ✏️ Edit
+          </button>
+          <button class="icon-btn ${this._showSettings ? 'active' : ''}" id="btn-settings" aria-label="Open settings">
+            ⚙️
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderEditToolbar(): string {
+    const modes: Array<{ id: EditMode; label: string; icon: string }> = [
+      { id: 'select', label: 'Select', icon: '↖️' },
+      { id: 'draw-zone', label: 'Draw Zone', icon: '📐' },
+      { id: 'add-furniture', label: 'Add Furniture', icon: '🛋️' },
+    ];
+    return `
+      <div class="edit-toolbar">
+        <div class="toolbar-group">
+          ${modes.map(m => `
+            <button class="icon-btn ${this._editMode === m.id ? 'active' : ''}"
+              data-mode="${m.id}" aria-label="${m.label}">
+              ${m.icon} ${m.label}
+            </button>
+          `).join('')}
+        </div>
+        <div class="toolbar-separator"></div>
+        <div class="toolbar-group">
+          <button class="icon-btn" id="btn-undo" aria-label="Undo" ${this._historyIndex <= 0 ? 'disabled' : ''}>↩</button>
+          <button class="icon-btn" id="btn-redo" aria-label="Redo" ${this._historyIndex >= this._history.length - 1 ? 'disabled' : ''}>↪</button>
+        </div>
+        <div class="toolbar-separator"></div>
+        <button class="icon-btn" id="btn-save" aria-label="Save">💾 Save</button>
+      </div>
+      ${this._editMode === 'add-furniture' ? (this._configEditor?.renderFurniturePicker(this._selectedFurnitureType) ?? '') : ''}
+    `;
+  }
+
+  private _renderSidebar(): string {
+    const zones = this._zoneEditor?.getZones() ?? [];
+    const targets = this._tracker?.getTargets() ?? [];
+    return `
+      <div class="sidebar">
+        ${zones.length > 0 ? `
+          <div class="sidebar-section">
+            <div class="sidebar-label">Zones</div>
+            ${zones.map(z => `
+              <div class="zone-item">
+                <span class="zone-dot" style="background:${z.color}"></span>
+                <span class="zone-name">${z.name}</span>
+                <span class="zone-status ${z.occupied ? 'active' : 'clear'}">${z.occupied ? 'Active' : 'Clear'}</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+
+        <div class="sidebar-section">
+          <div class="sidebar-label">Targets</div>
+          ${targets.map(t => t.active ? `
+            <div class="target-item">
+              <div class="target-header">
+                <span class="target-dot" style="background:${t.color}"></span>
+                <span class="target-label">${t.label || `T${t.id}`}</span>
+              </div>
+              <div class="target-coords">
+                x: ${t.x.toFixed(0)}mm &nbsp; y: ${t.y.toFixed(0)}mm
+              </div>
+            </div>
+          ` : `
+            <div class="target-item">
+              <div class="target-header">
+                <span class="target-dot" style="background:${t.color};opacity:0.3"></span>
+                <span class="target-inactive">${t.label || `T${t.id}`} (inactive)</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+
+        <div class="sidebar-actions">
+          <button class="action-btn ${this._editMode === 'draw-zone' ? 'active' : ''}"
+            id="btn-draw-zone" aria-label="Draw zone">
+            📐 Draw Zone
+          </button>
+          <button class="action-btn ${this._editMode === 'add-furniture' ? 'active' : ''}"
+            id="btn-add-furniture" aria-label="Add furniture">
+            🛋️ Add Furniture
+          </button>
+          <button class="action-btn" id="btn-export-yaml" aria-label="Export zone YAML">
+            📋 Export YAML
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderSettingsPanel(): string {
+    return `
+      <div class="settings-overlay open" id="settings-panel">
+        <div class="settings-header">
+          <span>Settings</span>
+          <button class="icon-btn" id="btn-close-settings" aria-label="Close settings">✕</button>
+        </div>
+        <div class="settings-body" id="settings-body">
+          ${this._configEditor?.renderHTML() ?? ''}
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderYamlPanel(): string {
+    const yaml = generateZoneYaml(this._config);
+    return `
+      <div class="yaml-overlay" id="yaml-panel">
+        <div class="yaml-header">
+          <h3>Zone Template YAML</h3>
+          <button class="icon-btn" id="btn-close-yaml" aria-label="Close YAML export">✕</button>
+        </div>
+        <div class="yaml-block">
+          <button class="copy-btn" id="btn-copy-yaml" aria-label="Copy YAML">Copy</button>
+          <pre class="yaml-code" id="yaml-content">${this._escapeHtml(yaml)}</pre>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderZoneNameDialog(): string {
+    return `
+      <div class="zone-name-dialog" id="zone-name-dialog" role="dialog" aria-modal="true" aria-label="Name this zone">
+        <h3>Name this zone</h3>
+        <input type="text" class="zone-name-input" id="zone-name-input"
+          value="Zone ${(this._zoneEditor?.getZones().length ?? 0) + 1}"
+          placeholder="Zone name"
+          aria-label="Zone name">
+        <div class="dialog-actions">
+          <button class="btn-secondary" id="btn-cancel-zone" aria-label="Cancel">Cancel</button>
+          <button class="btn-primary" id="btn-confirm-zone" aria-label="Confirm zone name">Add Zone</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _attachEventListeners(): void {
+    const $ = (id: string) => this._shadow.getElementById(id);
+
+    $('btn-edit')?.addEventListener('click', () => {
+      this._isEditMode = !this._isEditMode;
+      if (!this._isEditMode) this._editMode = 'none';
+      this._renderDOM();
+      this._setupCanvas();
+    });
+
+    $('btn-settings')?.addEventListener('click', () => {
+      this._showSettings = !this._showSettings;
+      this._renderDOM();
+      this._setupCanvas();
+      if (this._showSettings) {
+        const settingsBody = this._shadow.getElementById('settings-body');
+        if (settingsBody) this._configEditor?.attachListeners(settingsBody);
+      }
+    });
+
+    $('btn-close-settings')?.addEventListener('click', () => {
+      this._showSettings = false;
+      this._renderDOM();
+      this._setupCanvas();
+    });
+
+    $('btn-close-yaml')?.addEventListener('click', () => {
+      this._showYaml = false;
+      this._renderDOM();
+      this._setupCanvas();
+    });
+
+    $('btn-copy-yaml')?.addEventListener('click', () => {
+      const pre = $('yaml-content');
+      if (pre) void navigator.clipboard.writeText(pre.textContent ?? '');
+    });
+
+    $('btn-export-yaml')?.addEventListener('click', () => {
+      this._showYaml = true;
+      this._renderDOM();
+      this._setupCanvas();
+    });
+
+    $('btn-draw-zone')?.addEventListener('click', () => {
+      this._startDrawingMode();
+    });
+
+    $('btn-add-furniture')?.addEventListener('click', () => {
+      this._editMode = this._editMode === 'add-furniture' ? 'none' : 'add-furniture';
+      this._isEditMode = this._editMode !== 'none';
+      this._renderDOM();
+      this._setupCanvas();
+    });
+
+    $('btn-undo')?.addEventListener('click', () => this._undo());
+    $('btn-redo')?.addEventListener('click', () => this._redo());
+    $('btn-save')?.addEventListener('click', () => void this._save());
+
+    // Edit mode toolbar buttons
+    this._shadow.querySelectorAll('[data-mode]').forEach(el => {
+      el.addEventListener('click', () => {
+        const mode = (el as HTMLElement).dataset['mode'] as EditMode;
+        if (mode === 'draw-zone') {
+          this._startDrawingMode();
+        } else {
+          this._editMode = mode;
+          if (mode === 'add-furniture') this._selectedFurnitureType = null;
+          this._renderDOM();
+          this._setupCanvas();
+        }
+      });
+    });
+
+    // Furniture picker buttons
+    this._shadow.querySelectorAll('[data-furniture-type]').forEach(el => {
+      el.addEventListener('click', () => {
+        this._selectedFurnitureType = (el as HTMLElement).dataset['furnitureType'] ?? null;
+        this._renderDOM();
+        this._setupCanvas();
+      });
+    });
+
+    // Zone name dialog
+    $('btn-confirm-zone')?.addEventListener('click', () => this._confirmZoneName());
+    $('btn-cancel-zone')?.addEventListener('click', () => {
+      this._zoneNamePending = null;
+      this._renderDOM();
+      this._setupCanvas();
+    });
+    const zoneInput = $('zone-name-input') as HTMLInputElement | null;
+    zoneInput?.addEventListener('keydown', (e: Event) => {
+      if ((e as KeyboardEvent).key === 'Enter') this._confirmZoneName();
+    });
+    zoneInput?.focus();
+  }
+
+  private _startDrawingMode(): void {
+    this._editMode = 'draw-zone';
+    this._isEditMode = true;
+    this._zoneEditor?.startDrawing();
+    this._renderDOM();
+    this._setupCanvas();
+  }
+
+  private _confirmZoneName(): void {
+    const input = this._shadow.getElementById('zone-name-input') as HTMLInputElement | null;
+    const name = input?.value?.trim() || 'Zone';
+    if (this._zoneNamePending) {
+      const zone = { ...this._zoneNamePending, name };
+      this._zoneEditor?.addZone(zone);
+      this._zoneNamePending = null;
+      this._config.zones = this._zoneEditor?.getZoneConfigs() ?? [];
+      this._pushHistory();
+      this._dispatchZoneChange(zone.id, false);
+    }
+    this._editMode = 'select';
+    this._renderDOM();
+    this._setupCanvas();
+  }
+
+  private _setupCanvas(): void {
+    const canvas = this._shadow.getElementById('radar-canvas') as HTMLCanvasElement | null;
+    const wrap = this._shadow.getElementById('canvas-wrap') as HTMLElement | null;
+    if (!canvas || !wrap) return;
+
+    // Set canvas size to match wrapper
+    const rect = wrap.getBoundingClientRect();
+    const size = Math.max(rect.width || 300, 200);
+    const height = Math.max(rect.height || 300, 200);
+    canvas.width = size;
+    canvas.height = height;
+
+    if (!this._radarCanvas) {
+      this._radarCanvas = new RadarCanvas(canvas, this._config);
+      this._radarCanvas.startAnimation();
+    } else {
+      this._radarCanvas.resize(size, height);
+      this._radarCanvas.updateConfig(this._config);
+    }
+    this._radarCanvas.markDirty();
+
+    // Resize observer
+    if (!this._resizeObserver) {
+      this._resizeObserver = new ResizeObserver(() => {
+        const r = wrap.getBoundingClientRect();
+        this._radarCanvas?.resize(r.width, r.height);
+        canvas.width = r.width;
+        canvas.height = r.height;
+      });
+      this._resizeObserver.observe(wrap);
+    }
+
+    this._attachCanvasListeners(canvas);
+  }
+
+  private _attachCanvasListeners(canvas: HTMLCanvasElement): void {
+    // Remove old listeners by cloning
+    const newCanvas = canvas.cloneNode(true) as HTMLCanvasElement;
+    canvas.parentNode?.replaceChild(newCanvas, canvas);
+
+    let mouseIsDown = false;
+
+    newCanvas.addEventListener('mousemove', (e: MouseEvent) => {
+      const pos = this._getCanvasPos(newCanvas, e);
+      const tooltip = this._shadow.getElementById('coord-tooltip');
+
+      if (this._editMode === 'draw-zone' && this._zoneEditor) {
+        const hovered = this._zoneEditor.isNearFirstVertex(pos.x, pos.y, newCanvas.width, newCanvas.height);
+        this._radarCanvas?.markDirty();
+        // Update mouse pos for drawing overlay
+        void hovered;
+      }
+
+      if (mouseIsDown) {
+        if (this._editMode === 'select') {
+          this._furnitureLayer?.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
+          this._zoneEditor?.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
+          this._radarCanvas?.markDirty();
+        }
+      }
+
+      // Coordinate tooltip
+      if (tooltip) {
+        const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+        tooltip.textContent = `x: ${mm.x.toFixed(0)}mm  y: ${mm.y.toFixed(0)}mm`;
+        tooltip.style.display = 'block';
+        tooltip.style.left = `${pos.x + 12}px`;
+        tooltip.style.top = `${pos.y - 20}px`;
+      }
+    });
+
+    newCanvas.addEventListener('mouseleave', () => {
+      const tooltip = this._shadow.getElementById('coord-tooltip');
+      if (tooltip) tooltip.style.display = 'none';
+    });
+
+    newCanvas.addEventListener('mousedown', (e: MouseEvent) => {
+      mouseIsDown = true;
+      const pos = this._getCanvasPos(newCanvas, e);
+
+      if (this._editMode === 'draw-zone' && this._zoneEditor) {
+        const closed = this._zoneEditor.handleDrawClick(pos.x, pos.y, newCanvas.width, newCanvas.height);
+        if (closed) {
+          // Zone name dialog will appear
+        }
+        this._radarCanvas?.markDirty();
+      } else if (this._editMode === 'add-furniture' && this._selectedFurnitureType) {
+        this._pushHistory();
+        this._furnitureLayer?.placeAt(this._selectedFurnitureType, pos.x, pos.y, newCanvas.width, newCanvas.height);
+        this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
+        this._radarCanvas?.markDirty();
+      } else if (this._editMode === 'select') {
+        const consumed = this._furnitureLayer?.onMouseDown(pos.x, pos.y, newCanvas.width, newCanvas.height);
+        if (!consumed) {
+          this._zoneEditor?.onMouseDown(pos.x, pos.y, newCanvas.width, newCanvas.height);
+        }
+        this._radarCanvas?.markDirty();
+      }
+    });
+
+    newCanvas.addEventListener('mouseup', () => {
+      mouseIsDown = false;
+      this._furnitureLayer?.onMouseUp();
+      this._zoneEditor?.onMouseUp();
+      this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
+      this._config.zones = this._zoneEditor?.getZoneConfigs() ?? [];
+    });
+
+    newCanvas.addEventListener('dblclick', (e: MouseEvent) => {
+      const pos = this._getCanvasPos(newCanvas, e);
+      if (this._editMode === 'select' && this._zoneEditor) {
+        this._zoneEditor.onDoubleClick(pos.x, pos.y, newCanvas.width, newCanvas.height);
+        this._radarCanvas?.markDirty();
+      }
+    });
+
+    newCanvas.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && this._editMode === 'draw-zone') {
+        const closed = this._zoneEditor?.finishDrawing();
+        if (closed) this._radarCanvas?.markDirty();
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && this._editMode === 'select') {
+        this._pushHistory();
+        this._furnitureLayer?.deleteSelected();
+        this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
+        this._radarCanvas?.markDirty();
+      }
+    });
+    newCanvas.setAttribute('tabindex', '0');
+
+    // Swap radar canvas reference
+    const ctx = newCanvas.getContext('2d');
+    if (ctx && this._radarCanvas) {
+      // reinit with new canvas element
+      this._radarCanvas.stopAnimation();
+      this._radarCanvas = new RadarCanvas(newCanvas, this._config);
+      this._radarCanvas.startAnimation();
+    }
+  }
+
+  private _getCanvasPos(canvas: HTMLCanvasElement, e: MouseEvent): Point {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  }
+
+  private _startRenderLoop(): void {
+    const loop = () => {
+      const canvas = this._shadow.querySelector('#radar-canvas') as HTMLCanvasElement | null;
+      if (!canvas || !this._radarCanvas) {
+        this._rafId = requestAnimationFrame(loop);
+        return;
+      }
+
+      const targets = this._tracker?.getTargets() ?? [];
+      const zones = this._zoneEditor?.getZones() ?? [];
+      const furniture = this._furnitureLayer?.getItems() ?? [];
+
+      // Update zone occupancy
+      const occupiedZones = this._tracker?.getOccupiedZones(zones) ?? new Set<string>();
+      this._zoneEditor?.updateOccupancy(occupiedZones);
+
+      // Dispatch zone change events
+      for (const zone of zones) {
+        const wasOccupied = zone.occupied;
+        const isNowOccupied = occupiedZones.has(zone.id);
+        if (wasOccupied !== isNowOccupied) {
+          this._dispatchZoneChange(zone.id, isNowOccupied);
+        }
+      }
+
+      const drawingState = {
+        mode: this._editMode,
+        zoneVertices: this._zoneEditor?.getDrawingVertices() ?? [],
+        mousePos: null,
+        hoveredVertexIndex: null,
+      };
+
+      this._radarCanvas.render(targets, zones, furniture, drawingState, null);
+
+      // Draw furniture layer with handles
+      const ctx = canvas.getContext('2d');
+      if (ctx && this._furnitureLayer) {
+        this._furnitureLayer.drawHandles(ctx, canvas.width, canvas.height);
+      }
+
+      // Update sidebar periodically
+      this._updateSidebarInPlace();
+
+      this._rafId = requestAnimationFrame(loop);
+    };
+    this._rafId = requestAnimationFrame(loop);
+  }
+
+  private _updateSidebarInPlace(): void {
+    // Update target coords and zone status without full re-render
+    const targets = this._tracker?.getTargets() ?? [];
+    const zones = this._zoneEditor?.getZones() ?? [];
+
+    for (const t of targets) {
+      const coordEl = this._shadow.querySelector(`.target-item:nth-child(${t.id}) .target-coords`);
+      if (coordEl && t.active) {
+        coordEl.textContent = `x: ${t.x.toFixed(0)}mm   y: ${t.y.toFixed(0)}mm`;
+      }
+    }
+
+    for (const zone of zones) {
+      // Find by zone name (simple approach)
+      this._shadow.querySelectorAll('.zone-item').forEach(el => {
+        const nameEl = el.querySelector('.zone-name');
+        if (nameEl?.textContent === zone.name) {
+          const statusEl = el.querySelector('.zone-status');
+          if (statusEl) {
+            statusEl.textContent = zone.occupied ? 'Active' : 'Clear';
+            statusEl.className = `zone-status ${zone.occupied ? 'active' : 'clear'}`;
+          }
+        }
+      });
+    }
+  }
+
+  private _stopRenderLoop(): void {
+    if (this._rafId !== null) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+  }
+
+  private async _subscribeEntities(): Promise<void> {
+    if (!this._hass) return;
+    const entityMappings = buildEntityIds(
+      this._config.device_name,
+      this._config.targets.map(t => t.id)
+    );
+    const entityIds = entityMappings.map(m => m.entityId);
+
+    try {
+      this._unsubscribes = await subscribeEntities(
+        this._hass,
+        entityIds,
+        (entityId, newState) => {
+          const mapping = entityMappings.find(m => m.entityId === entityId);
+          if (!mapping) return;
+          const value = newState ? parseFloat(newState.state) : null;
+          this._tracker?.updateAxis(mapping.targetId, mapping.axis, isNaN(value ?? NaN) ? null : value);
+          this._radarCanvas?.markDirty();
+        }
+      );
+    } catch (err) {
+      console.warn('[LD2450RadarCard] Could not subscribe to entities:', err);
+    }
+  }
+
+  private _loadInitialStates(): void {
+    if (!this._hass) return;
+    const mappings = buildEntityIds(
+      this._config.device_name,
+      this._config.targets.map(t => t.id)
+    );
+    for (const m of mappings) {
+      const val = getNumericState(this._hass, m.entityId);
+      if (val !== null) {
+        this._tracker?.updateAxis(m.targetId, m.axis, val);
+      }
+    }
+  }
+
+  private _unsubAll(): void {
+    for (const unsub of this._unsubscribes) {
+      try { unsub(); } catch (_e) { /* ignore */ }
+    }
+    this._unsubscribes = [];
+  }
+
+  private _onConfigPatch(patch: Partial<CardConfig>): void {
+    this._config = { ...this._config, ...patch };
+    this._radarCanvas?.updateConfig(this._config);
+    this._tracker?.updateConfig(this._config);
+    this._zoneEditor?.updateConfig(this._config);
+    this._furnitureLayer?.updateConfig(this._config);
+    this._configEditor?.updateConfig(this._config);
+    this._radarCanvas?.markDirty();
+  }
+
+  private _pushHistory(): void {
+    // Trim forward history
+    this._history = this._history.slice(0, this._historyIndex + 1);
+    this._history.push({
+      furniture: JSON.parse(JSON.stringify(this._config.furniture)),
+      zones: JSON.parse(JSON.stringify(this._config.zones)),
+    });
+    this._historyIndex = this._history.length - 1;
+  }
+
+  private _undo(): void {
+    if (this._historyIndex <= 0) return;
+    this._historyIndex--;
+    this._applyHistory(this._history[this._historyIndex]);
+  }
+
+  private _redo(): void {
+    if (this._historyIndex >= this._history.length - 1) return;
+    this._historyIndex++;
+    this._applyHistory(this._history[this._historyIndex]);
+  }
+
+  private _applyHistory(entry: HistoryEntry): void {
+    this._config.furniture = entry.furniture;
+    this._config.zones = entry.zones;
+    this._furnitureLayer?.updateConfig(this._config);
+    this._zoneEditor?.updateConfig(this._config);
+    this._renderDOM();
+    this._setupCanvas();
+  }
+
+  private async _save(): Promise<void> {
+    if (!this._hass) return;
+    // Write zones to input_number entities
+    for (const zone of this._config.zones) {
+      for (let i = 0; i < zone.vertices.length; i++) {
+        const v = zone.vertices[i];
+        const baseName = `input_number.radar_zone_${zone.id}_v${i}`;
+        try {
+          await this._hass.callService('input_number', 'set_value', {
+            entity_id: `${baseName}_x`,
+            value: v.x,
+          });
+          await this._hass.callService('input_number', 'set_value', {
+            entity_id: `${baseName}_y`,
+            value: v.y,
+          });
+        } catch (_e) {
+          // input_number entities may not exist yet — that's OK
+        }
+      }
+    }
+    console.info('[LD2450RadarCard] Config saved');
+  }
+
+  private _dispatchZoneChange(zoneId: string, occupied: boolean): void {
+    this.dispatchEvent(new CustomEvent('ld2450-zone-change', {
+      bubbles: true,
+      composed: true,
+      detail: { zoneId, occupied },
+    }));
+  }
+
+  private _escapeHtml(str: string): string {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // Required by Lovelace
+  static getConfigElement(): HTMLElement {
+    return document.createElement('div');
+  }
+
+  static getStubConfig(): Partial<CardConfig> {
+    return {
+      type: 'custom:ld2450-radar-card',
+      title: 'Living Room Radar',
+      device_name: 'living_room_radar',
+      max_range: 6000,
+      fov_angle: 120,
+      show_grid: true,
+      show_sweep: true,
+      show_trails: true,
+      trail_length: 12,
+      targets: [
+        { id: 1, color: '#38bdf8', label: 'Person 1' },
+        { id: 2, color: '#f472b6', label: 'Person 2' },
+        { id: 3, color: '#34d399', label: 'Person 3' },
+      ],
+      furniture: [],
+      zones: [],
+    };
+  }
+}
+
+// Register the custom element
+customElements.define('ld2450-radar-card', LD2450RadarCard);
+
+// Register with Lovelace card picker
+interface WindowWithCards extends Window {
+  customCards?: Array<{
+    type: string;
+    name: string;
+    description: string;
+    preview: boolean;
+    documentationURL?: string;
+  }>;
+}
+(window as WindowWithCards).customCards = (window as WindowWithCards).customCards ?? [];
+(window as WindowWithCards).customCards!.push({
+  type: 'ld2450-radar-card',
+  name: 'LD2450 Radar Card',
+  description: 'Real-time radar visualization for HLK-LD2450 mmWave presence sensor',
+  preview: true,
+  documentationURL: 'https://github.com/gorick1/HA-mmWave-Dashboard',
+});
+
+export { LD2450RadarCard };
