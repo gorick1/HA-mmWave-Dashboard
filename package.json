@@ -1,0 +1,35 @@
+{
+  "name": "ld2450-radar-card",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Custom Home Assistant Lovelace card for HLK-LD2450 mmWave presence sensor",
+  "main": "dist/ld2450-radar-card.js",
+  "scripts": {
+    "dev": "rollup -c --watch",
+    "build": "rollup -c",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "mmwave",
+    "radar",
+    "ld2450",
+    "presence",
+    "hacs"
+  ],
+  "author": "gorick1",
+  "license": "MIT",
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.57.0",
+    "rollup": "^4.9.6",
+    "rollup-plugin-string": "^3.0.0",
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.3"
+  }
+}
