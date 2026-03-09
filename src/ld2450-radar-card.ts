@@ -12,6 +12,7 @@ import { TargetTracker } from './components/TargetTracker.js';
 import { FurnitureLayer } from './components/FurnitureLayer.js';
 import { ZoneEditor } from './components/ZoneEditor.js';
 import { ConfigEditor, generateZoneYaml } from './components/ConfigEditor.js';
+import { LD2450RadarCardEditor } from './components/CardEditor.js';
 import { buildEntityIds, subscribeEntities, getNumericState } from './utils/ha-websocket.js';
 import { canvasToMm } from './utils/geometry.js';
 // @ts-expect-error CSS import via rollup-plugin-string
@@ -777,7 +778,7 @@ class LD2450RadarCard extends HTMLElement {
 
   // Required by Lovelace
   static getConfigElement(): HTMLElement {
-    return document.createElement('div');
+    return document.createElement('ld2450-radar-card-editor');
   }
 
   static getStubConfig(): Partial<CardConfig> {
@@ -804,6 +805,9 @@ class LD2450RadarCard extends HTMLElement {
 
 // Register the custom element
 customElements.define('ld2450-radar-card', LD2450RadarCard);
+
+// Register the card editor element (used by Lovelace's visual card picker)
+customElements.define('ld2450-radar-card-editor', LD2450RadarCardEditor);
 
 // Register with Lovelace card picker
 interface WindowWithCards extends Window {
