@@ -92,7 +92,8 @@ When you add or edit the card, the **visual editor** opens automatically.
 
 Click **💾 Save** in the edit toolbar. The card will:
 
-- Create an `input_boolean` helper for each zone (e.g. `input_boolean.radar_zone_entry`)
+- Create an `input_boolean` helper for each zone, named with the device and zone context
+  (e.g. device `living_room_radar` + zone id `zone_entry` → `input_boolean.radar_living_room_radar_zone_entry`)
 - Automatically toggle helpers **on/off** as targets enter or leave zones
 
 These helpers work like any other HA entity — use them directly in automations, scripts, or conditions.
@@ -104,13 +105,17 @@ automation:
   - alias: "Lights on when someone enters the entry zone"
     trigger:
       - platform: state
-        entity_id: input_boolean.radar_zone_entry
+        entity_id: input_boolean.radar_living_room_radar_zone_entry
         to: "on"
     action:
       - service: light.turn_on
         target:
           entity_id: light.hallway
 ```
+
+> 💡 The entity ID follows the pattern `input_boolean.radar_<device_name>_<zone_id>`.
+> Zone IDs are assigned when you create each zone (e.g. `zone_1234567890`).
+> You can find the exact entity ID in **Settings → Devices & Services → Helpers** after saving.
 
 ### Editing Zones
 

@@ -3029,30 +3029,31 @@ class LD2450RadarCard extends HTMLElement {
         // so automations can trigger on zone occupancy changes.
         for (const zone of this._config.zones) {
             const entityId = this._zoneEntityId(zone.id);
-            if (!this._hass.states[entityId]) {
-                try {
-                    await this._hass.connection.sendMessageWithResult({
-                        type: 'input_boolean/create',
-                        name: `Radar Zone ${zone.name}`,
-                        icon: 'mdi:motion-sensor',
-                    });
-                    console.info(`[LD2450RadarCard] Created helper: ${entityId}`);
-                }
-                catch (_e) {
-                    // Helper may already exist or the user may lack permission — not fatal
-                    console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}":`, _e);
-                }
+            try {
+                await this._hass.connection.sendMessageWithResult({
+                    type: 'input_boolean/create',
+                    name: `Radar ${this._config.device_name} Zone ${zone.name}`,
+                    icon: 'mdi:motion-sensor',
+                });
+                console.info(`[LD2450RadarCard] Created helper: ${entityId}`);
+            }
+            catch (_e) {
+                // Helper may already exist or the user may lack permission — not fatal
+                console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}" (may already exist):`, _e);
             }
         }
         console.info('[LD2450RadarCard] Zones saved — input_boolean helpers are ready for automations');
     }
     /**
      * Derive the input_boolean entity ID for a zone.
-     * E.g. zone named "Entry" → input_boolean.radar_zone_entry
+     * Includes device_name for uniqueness across multiple radar devices.
+     * E.g. device "living_room_radar", zone id "zone_entry"
+     *   → input_boolean.radar_living_room_radar_zone_entry
      */
     _zoneEntityId(zoneId) {
-        const slug = zoneId.replace(/[^a-z0-9_]/gi, '_').toLowerCase();
-        return `input_boolean.radar_${slug}`;
+        const deviceSlug = this._config.device_name.replace(/[^a-z0-9_]/gi, '_').toLowerCase();
+        const zoneSlug = zoneId.replace(/[^a-z0-9_]/gi, '_').toLowerCase();
+        return `input_boolean.radar_${deviceSlug}_${zoneSlug}`;
     }
     _dispatchZoneChange(zoneId, occupied) {
         // 1. Emit DOM event (for any in-page listeners)
@@ -3069,8 +3070,8 @@ class LD2450RadarCard extends HTMLElement {
                 const service = occupied ? 'turn_on' : 'turn_off';
                 this._hass.callService('input_boolean', service, {
                     entity_id: entityId,
-                }).catch(() => {
-                    // Not fatal if the entity doesn't exist yet
+                }).catch((err) => {
+                    console.warn(`[LD2450RadarCard] Failed to toggle ${entityId}:`, err);
                 });
             }
         }
