@@ -19,6 +19,26 @@
   --text-muted: rgba(148, 163, 184, 0.7);
 }
 
+/* Light color scheme */
+:host(.light-scheme) {
+  --radar-bg: #f0f4f8;
+  --radar-grid: rgba(59, 130, 246, 0.1);
+  --radar-sweep: rgba(59, 130, 246, 0.12);
+  --radar-fov: rgba(14, 165, 233, 0.07);
+  --radar-fov-border: rgba(14, 165, 233, 0.5);
+  --target-primary: #0284c7;
+  --target-trail: rgba(2, 132, 199, 0.3);
+  --zone-fill: rgba(109, 40, 217, 0.1);
+  --zone-border: rgba(109, 40, 217, 0.6);
+  --zone-active: rgba(139, 92, 246, 0.25);
+  --furniture-fill: rgba(100, 116, 139, 0.12);
+  --furniture-border: rgba(100, 116, 139, 0.55);
+  --glass-surface: rgba(255, 255, 255, 0.92);
+  --glass-border: rgba(59, 130, 246, 0.18);
+  --text-primary: #1e293b;
+  --text-muted: rgba(71, 85, 105, 0.8);
+}
+
 .card-container {
   background: var(--glass-surface);
   border: 1px solid var(--glass-border);
@@ -144,6 +164,76 @@ canvas.cursor-move {
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+:host(.light-scheme) .sidebar {
+  background: rgba(241, 245, 249, 0.85);
+}
+
+:host(.light-scheme) .card-header {
+  background: rgba(248, 250, 252, 0.6);
+}
+
+:host(.light-scheme) .edit-toolbar {
+  background: rgba(241, 245, 249, 0.7);
+}
+
+:host(.light-scheme) .settings-overlay {
+  background: rgba(248, 250, 252, 0.98);
+}
+
+:host(.light-scheme) .zone-name-dialog {
+  background: rgba(255, 255, 255, 0.99);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+:host(.light-scheme) .yaml-overlay {
+  background: rgba(248, 250, 252, 0.98);
+}
+
+:host(.light-scheme) .yaml-block {
+  background: rgba(241, 245, 249, 0.8);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+:host(.light-scheme) .yaml-code {
+  color: #334155;
+}
+
+:host(.light-scheme) .icon-btn {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+:host(.light-scheme) .icon-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+:host(.light-scheme) .action-btn {
+  background: rgba(59, 130, 246, 0.07);
+  border-color: rgba(59, 130, 246, 0.18);
+}
+
+:host(.light-scheme) .action-btn:hover {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+:host(.light-scheme) .furniture-btn {
+  background: rgba(59, 130, 246, 0.05);
+  border-color: rgba(59, 130, 246, 0.14);
+}
+
+:host(.light-scheme) .furniture-btn:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+:host(.light-scheme) .zone-name-input {
+  background: rgba(59, 130, 246, 0.07);
+  border-color: rgba(59, 130, 246, 0.2);
+  color: var(--text-primary);
 }
 
 .sidebar-section {

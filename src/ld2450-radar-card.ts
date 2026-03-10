@@ -63,6 +63,8 @@ class LD2450RadarCard extends HTMLElement {
   private _historyIndex = -1;
   private _zoneNamePending: ZoneConfig | null = null;
   private _tickInterval: ReturnType<typeof setInterval> | null = null;
+  private _dragPlacingId: string | null = null;
+  private _dragPlaceStartMm: Point | null = null;
 
   constructor() {
     super();
@@ -78,6 +80,7 @@ class LD2450RadarCard extends HTMLElement {
     }
     if (!this._config.furniture) this._config.furniture = [];
     if (!this._config.zones) this._config.zones = [];
+    this._applyColorScheme();
     this._init();
   }
 
@@ -106,6 +109,24 @@ class LD2450RadarCard extends HTMLElement {
       this._tickInterval = null;
     }
     this._radarCanvas?.stopAnimation();
+  }
+
+  private _applyColorScheme(): void {
+    if (this._config.color_scheme === 'light') {
+      this.classList.add('light-scheme');
+    } else {
+      this.classList.remove('light-scheme');
+    }
+  }
+
+  private _toggleColorScheme(): void {
+    const next: 'dark' | 'light' = this._config.color_scheme === 'light' ? 'dark' : 'light';
+    this._config = { ...this._config, color_scheme: next };
+    this._applyColorScheme();
+    this._radarCanvas?.updateConfig(this._config);
+    this._radarCanvas?.markDirty();
+    this._renderDOM();
+    this._setupCanvas();
   }
 
   private _init(): void {
@@ -147,14 +168,20 @@ class LD2450RadarCard extends HTMLElement {
         </div>
       </div>
     `;
+    this._applyColorScheme();
     this._attachEventListeners();
   }
 
   private _renderHeader(): string {
+    const isLight = this._config.color_scheme === 'light';
     return `
       <div class="card-header">
         <div class="card-title">${this._config.title ?? 'LD2450 Radar'}</div>
         <div class="header-actions">
+          <button class="icon-btn ${isLight ? 'active' : ''}" id="btn-theme" aria-label="Toggle light/dark theme"
+            title="${isLight ? 'Switch to dark mode' : 'Switch to light mode'}">
+            ${isLight ? '☀️' : '🌙'}
+          </button>
           <button class="icon-btn ${this._isEditMode ? 'active' : ''}" id="btn-edit" aria-label="Toggle edit mode">
             ✏️ Edit
           </button>
@@ -299,6 +326,10 @@ class LD2450RadarCard extends HTMLElement {
 
   private _attachEventListeners(): void {
     const $ = (id: string) => this._shadow.getElementById(id);
+
+    $('btn-theme')?.addEventListener('click', () => {
+      this._toggleColorScheme();
+    });
 
     $('btn-edit')?.addEventListener('click', () => {
       this._isEditMode = !this._isEditMode;
@@ -471,7 +502,21 @@ class LD2450RadarCard extends HTMLElement {
       }
 
       if (mouseIsDown) {
-        if (this._editMode === 'select') {
+        if (this._editMode === 'add-furniture' && this._dragPlacingId && this._dragPlaceStartMm) {
+          // Update the dragged item's size and center based on current mouse position
+          const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+          const item = this._furnitureLayer?.getItems().find(i => i.id === this._dragPlacingId);
+          if (item) {
+            const w = Math.abs(mm.x - this._dragPlaceStartMm.x);
+            const h = Math.abs(mm.y - this._dragPlaceStartMm.y);
+            item.width = Math.max(100, w);
+            item.height = Math.max(100, h);
+            item.x = (mm.x + this._dragPlaceStartMm.x) / 2;
+            item.y = (mm.y + this._dragPlaceStartMm.y) / 2;
+            // Config array is synced on mouseup; just mark dirty for live preview
+            this._radarCanvas?.markDirty();
+          }
+        } else if (this._editMode === 'select') {
           this._furnitureLayer?.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
           this._zoneEditor?.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
           this._radarCanvas?.markDirty();
@@ -505,7 +550,15 @@ class LD2450RadarCard extends HTMLElement {
         this._radarCanvas?.markDirty();
       } else if (this._editMode === 'add-furniture' && this._selectedFurnitureType) {
         this._pushHistory();
-        this._furnitureLayer?.placeAt(this._selectedFurnitureType, pos.x, pos.y, newCanvas.width, newCanvas.height);
+        const startMm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+        const placed = this._furnitureLayer?.placeAt(this._selectedFurnitureType, pos.x, pos.y, newCanvas.width, newCanvas.height);
+        if (placed) {
+          // Start with a minimal size; the user drags to define the final dimensions
+          placed.width = 100;
+          placed.height = 100;
+          this._dragPlacingId = placed.id;
+          this._dragPlaceStartMm = { x: startMm.x, y: startMm.y };
+        }
         this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
         this._radarCanvas?.markDirty();
       } else if (this._editMode === 'select') {
@@ -519,6 +572,8 @@ class LD2450RadarCard extends HTMLElement {
 
     newCanvas.addEventListener('mouseup', () => {
       mouseIsDown = false;
+      this._dragPlacingId = null;
+      this._dragPlaceStartMm = null;
       this._furnitureLayer?.onMouseUp();
       this._zoneEditor?.onMouseUp();
       this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
@@ -697,6 +752,7 @@ class LD2450RadarCard extends HTMLElement {
 
   private _onConfigPatch(patch: Partial<CardConfig>): void {
     this._config = { ...this._config, ...patch };
+    this._applyColorScheme();
     this._radarCanvas?.updateConfig(this._config);
     this._tracker?.updateConfig(this._config);
     this._zoneEditor?.updateConfig(this._config);
