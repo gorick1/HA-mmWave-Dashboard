@@ -39,12 +39,19 @@ A premium, real-time radar visualization card for Home Assistant Lovelace, desig
 
 ### HACS Method (Recommended)
 
+Because this repository is not yet listed in the default HACS catalog, you must
+first add it as a **custom repository**:
+
 1. Open **HACS** in your Home Assistant instance
-2. Go to **Frontend** → click the **⊕** (Add) button
-3. Search for **LD2450 Radar Card**
-4. Click **Download** and follow the prompts
-5. **Restart** Home Assistant (or reload the frontend resources)
-6. Open a dashboard, enter **Edit mode**, click **Add Card**, and search for
+2. Click the **⋮** (three-dot / overflow) menu in the top-right corner of the
+   HACS page and choose **Custom repositories**
+3. In the dialog that appears:
+   - **Repository URL:** `https://github.com/gorick1/HA-mmWave-Dashboard`
+   - **Category:** `Frontend`
+4. Click **Add** — the repository now appears in your Frontend list
+5. Click on **LD2450 Radar Card** in the list and then click **Download**
+6. **Restart** Home Assistant (or reload the browser frontend resources)
+7. Open a dashboard, enter **Edit mode**, click **Add Card**, and search for
    **LD2450 Radar Card** in the picker
 
 ### Manual Method
