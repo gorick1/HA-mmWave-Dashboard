@@ -797,34 +797,59 @@ class LD2450RadarCard extends HTMLElement {
 
   private async _save(): Promise<void> {
     if (!this._hass) return;
-    // Write zones to input_number entities
+
+    // For each zone, create an input_boolean helper (if it doesn't already exist)
+    // so automations can trigger on zone occupancy changes.
     for (const zone of this._config.zones) {
-      for (let i = 0; i < zone.vertices.length; i++) {
-        const v = zone.vertices[i];
-        const baseName = `input_number.radar_zone_${zone.id}_v${i}`;
+      const entityId = this._zoneEntityId(zone.id);
+      if (!this._hass.states[entityId]) {
         try {
-          await this._hass.callService('input_number', 'set_value', {
-            entity_id: `${baseName}_x`,
-            value: v.x,
+          await this._hass.connection.sendMessageWithResult({
+            type: 'input_boolean/create',
+            name: `Radar Zone ${zone.name}`,
+            icon: 'mdi:motion-sensor',
           });
-          await this._hass.callService('input_number', 'set_value', {
-            entity_id: `${baseName}_y`,
-            value: v.y,
-          });
+          console.info(`[LD2450RadarCard] Created helper: ${entityId}`);
         } catch (_e) {
-          // input_number entities may not exist yet — that's OK
+          // Helper may already exist or the user may lack permission — not fatal
+          console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}":`, _e);
         }
       }
     }
-    console.info('[LD2450RadarCard] Config saved');
+
+    console.info('[LD2450RadarCard] Zones saved — input_boolean helpers are ready for automations');
+  }
+
+  /**
+   * Derive the input_boolean entity ID for a zone.
+   * E.g. zone named "Entry" → input_boolean.radar_zone_entry
+   */
+  private _zoneEntityId(zoneId: string): string {
+    const slug = zoneId.replace(/[^a-z0-9_]/gi, '_').toLowerCase();
+    return `input_boolean.radar_${slug}`;
   }
 
   private _dispatchZoneChange(zoneId: string, occupied: boolean): void {
+    // 1. Emit DOM event (for any in-page listeners)
     this.dispatchEvent(new CustomEvent('ld2450-zone-change', {
       bubbles: true,
       composed: true,
       detail: { zoneId, occupied },
     }));
+
+    // 2. Toggle the corresponding input_boolean helper in HA so that
+    //    automations can trigger directly on state changes.
+    if (this._hass) {
+      const entityId = this._zoneEntityId(zoneId);
+      if (this._hass.states[entityId]) {
+        const service = occupied ? 'turn_on' : 'turn_off';
+        this._hass.callService('input_boolean', service, {
+          entity_id: entityId,
+        }).catch(() => {
+          // Not fatal if the entity doesn't exist yet
+        });
+      }
+    }
   }
 
   private _escapeHtml(str: string): string {
