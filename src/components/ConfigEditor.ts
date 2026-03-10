@@ -88,6 +88,7 @@ export class ConfigEditor {
    */
   renderHTML(): string {
     const c = this.config;
+    const isLight = c.color_scheme === 'light';
     return `
       <div class="setting-group">
         <div class="setting-label">Detection</div>
@@ -125,6 +126,10 @@ export class ConfigEditor {
             value="${c.trail_length}" aria-label="Trail length">
           <span class="setting-value">${c.trail_length}</span>
         </div>
+        <div class="setting-row">
+          <label for="cfg-light-mode">Light Mode</label>
+          <input type="checkbox" id="cfg-light-mode" ${isLight ? 'checked' : ''} aria-label="Enable light color scheme">
+        </div>
       </div>
 
       <div class="setting-group">
@@ -152,6 +157,7 @@ export class ConfigEditor {
     const checkSweep = get('cfg-sweep') as HTMLInputElement | null;
     const checkTrails = get('cfg-trails') as HTMLInputElement | null;
     const rangeTrail = get('cfg-trail-len') as HTMLInputElement | null;
+    const checkLightMode = get('cfg-light-mode') as HTMLInputElement | null;
 
     rangeMax?.addEventListener('input', () => {
       const val = parseInt(rangeMax.value);
@@ -184,6 +190,10 @@ export class ConfigEditor {
       this.onConfigChange({ trail_length: val });
       const span = rangeTrail.nextElementSibling as HTMLElement | null;
       if (span) span.textContent = `${val}`;
+    });
+
+    checkLightMode?.addEventListener('change', () => {
+      this.onConfigChange({ color_scheme: checkLightMode.checked ? 'light' : 'dark' });
     });
 
     container.querySelectorAll('input[data-target-id]').forEach(el => {

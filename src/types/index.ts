@@ -62,6 +62,7 @@ export interface CardConfig {
   show_sweep: boolean;
   show_trails: boolean;
   trail_length: number;
+  color_scheme?: 'dark' | 'light';
   targets: TargetConfig[];
   furniture: FurnitureConfig[];
   zones: ZoneConfig[];

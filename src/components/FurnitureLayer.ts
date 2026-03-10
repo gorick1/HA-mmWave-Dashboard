@@ -16,7 +16,7 @@ export class FurnitureLayer {
   private dragging = false;
   private dragOffset: Point = { x: 0, y: 0 };
   private resizing = false;
-  private rotating = false;
+  private resizeAnchorMm: Point = { x: 0, y: 0 };
   private resizeHandleIndex = -1;
   private snapToGridEnabled = true;
 
@@ -101,11 +101,29 @@ export class FurnitureLayer {
         for (let i = 0; i < handles.length; i++) {
           if (distance({ x: canvasX, y: canvasY }, handles[i]) < HANDLE_SIZE + 2) {
             if (i === 4) {
-              // Rotation handle
-              this.rotating = true;
+              // Rotation handle - use index 4 as rotation sentinel
+              this.resizing = false;
+              this.resizeHandleIndex = 4;
             } else {
               this.resizing = true;
               this.resizeHandleIndex = i;
+              // Anchor is the opposite corner in mm world space
+              const rot = degToRad(item.rotation);
+              const anchorIdx = (i + 2) % 4;
+              const halfW = item.width / 2;
+              const halfH = item.height / 2;
+              // Corners in local mm space (y-up): TL=(-hw,+hh), TR=(+hw,+hh), BR=(+hw,-hh), BL=(-hw,-hh)
+              const localCorners: Point[] = [
+                { x: -halfW, y: halfH },
+                { x: halfW, y: halfH },
+                { x: halfW, y: -halfH },
+                { x: -halfW, y: -halfH },
+              ];
+              const lc = localCorners[anchorIdx];
+              this.resizeAnchorMm = {
+                x: item.x + lc.x * Math.cos(rot) - lc.y * Math.sin(rot),
+                y: item.y + lc.x * Math.sin(rot) + lc.y * Math.cos(rot),
+              };
             }
             return true;
           }
@@ -154,17 +172,22 @@ export class FurnitureLayer {
       }
       item.x = mm.x - this.dragOffset.x;
       item.y = mm.y - this.dragOffset.y;
-    } else if (this.resizing && this.resizeHandleIndex >= 0) {
+    } else if (this.resizing && this.resizeHandleIndex >= 0 && this.resizeHandleIndex < 4) {
       const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
-      const dx = mm.x - item.x;
-      const dy = item.y - mm.y;
-      switch (this.resizeHandleIndex) {
-        case 0: item.width = Math.max(100, Math.abs(dx) * 2); item.height = Math.max(100, Math.abs(dy) * 2); break;
-        case 1: item.width = Math.max(100, Math.abs(dx) * 2); item.height = Math.max(100, Math.abs(dy) * 2); break;
-        case 2: item.width = Math.max(100, Math.abs(dx) * 2); item.height = Math.max(100, Math.abs(dy) * 2); break;
-        case 3: item.width = Math.max(100, Math.abs(dx) * 2); item.height = Math.max(100, Math.abs(dy) * 2); break;
-      }
-    } else if (this.rotating) {
+      // Resize from anchor corner: the anchor corner stays fixed, the dragged corner follows the mouse.
+      // Transform the mouse-to-anchor vector into the item's local (unrotated) frame.
+      const rot = degToRad(item.rotation);
+      const dx = mm.x - this.resizeAnchorMm.x;
+      const dy = mm.y - this.resizeAnchorMm.y;
+      const localDx = dx * Math.cos(-rot) - dy * Math.sin(-rot);
+      const localDy = dx * Math.sin(-rot) + dy * Math.cos(-rot);
+      item.width = Math.max(100, Math.abs(localDx));
+      item.height = Math.max(100, Math.abs(localDy));
+      // Reposition center to midpoint of anchor and current mouse in world space
+      item.x = (this.resizeAnchorMm.x + mm.x) / 2;
+      item.y = (this.resizeAnchorMm.y + mm.y) / 2;
+    } else if (this.resizeHandleIndex === 4) {
+      // Rotation
       const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
       const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN);
       const cx = sc.x + item.x * scale;
@@ -177,7 +200,6 @@ export class FurnitureLayer {
   onMouseUp(): void {
     this.dragging = false;
     this.resizing = false;
-    this.rotating = false;
     this.resizeHandleIndex = -1;
   }
 

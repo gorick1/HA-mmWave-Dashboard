@@ -107,489 +107,6 @@ function degToRad(deg) {
     return (deg * Math.PI) / 180;
 }
 
-const SENSOR_MARGIN$3 = 40;
-const TRAIL_OPACITY_MAX = 0.6;
-/**
- * RadarCanvas handles all canvas drawing for the radar visualization.
- */
-class RadarCanvas {
-    constructor(canvas, config) {
-        this.sweepAngle = -Math.PI / 2; // start pointing up
-        this.sweepAnimId = null;
-        this.lastSweepTime = 0;
-        this.dirty = true;
-        this.canvas = canvas;
-        const ctx = canvas.getContext('2d');
-        if (!ctx)
-            throw new Error('Could not get 2D context');
-        this.ctx = ctx;
-        this.config = config;
-    }
-    updateConfig(config) {
-        this.config = config;
-        this.dirty = true;
-    }
-    markDirty() {
-        this.dirty = true;
-    }
-    startAnimation() {
-        const animate = (time) => {
-            const dt = this.lastSweepTime ? time - this.lastSweepTime : 16;
-            this.lastSweepTime = time;
-            // ~1 RPM = 2π / 60s
-            if (this.config.show_sweep) {
-                this.sweepAngle += (2 * Math.PI * dt) / 60000;
-            }
-            this.dirty = true;
-            this.sweepAnimId = requestAnimationFrame(animate);
-        };
-        this.sweepAnimId = requestAnimationFrame(animate);
-    }
-    stopAnimation() {
-        if (this.sweepAnimId !== null) {
-            cancelAnimationFrame(this.sweepAnimId);
-            this.sweepAnimId = null;
-        }
-    }
-    resize(width, height) {
-        this.canvas.width = width;
-        this.canvas.height = height;
-        this.dirty = true;
-    }
-    /**
-     * Main render function. Call on rAF.
-     */
-    render(targets, zones, furniture, drawingState, hoveredPos) {
-        if (!this.dirty)
-            return;
-        this.dirty = false;
-        const { ctx, canvas, config } = this;
-        const w = canvas.width;
-        const h = canvas.height;
-        ctx.clearRect(0, 0, w, h);
-        if (config.show_grid)
-            this._drawGrid(w, h);
-        this._drawFOV(w, h);
-        if (config.show_sweep)
-            this._drawSweep(w, h);
-        this._drawFurniture(furniture, w, h);
-        this._drawZones(zones, targets, w, h);
-        if (config.show_trails)
-            this._drawTrails(targets, w, h);
-        this._drawTargets(targets, w, h);
-        this._drawSensor(w, h);
-        this._drawDrawingOverlay(drawingState, w, h);
-        if (hoveredPos) {
-            this._drawTooltip(hoveredPos, w, h);
-        }
-    }
-    _sensorPos(w, h) {
-        return { x: w / 2, y: h - SENSOR_MARGIN$3 };
-    }
-    _toCanvas(mmX, mmY, w, h) {
-        return mmToCanvas(mmX, mmY, w, h, this.config.max_range, SENSOR_MARGIN$3);
-    }
-    _drawGrid(w, h) {
-        const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
-        const fovHalf = degToRad(this.config.fov_angle / 2);
-        const maxRings = Math.ceil(this.config.max_range / 1000);
-        ctx.save();
-        ctx.strokeStyle = 'rgba(99,179,237,0.08)';
-        ctx.lineWidth = 1;
-        // Polar rings every 1000mm
-        for (let r = 1; r <= maxRings; r++) {
-            const pxR = r * 1000 * scale;
-            ctx.beginPath();
-            ctx.arc(sx, sy, pxR, -Math.PI, 0);
-            ctx.stroke();
-            // Range label
-            ctx.fillStyle = 'rgba(99,179,237,0.3)';
-            ctx.font = '10px system-ui';
-            ctx.fillText(`${r}m`, sx + 4, sy - pxR + 3);
-        }
-        // Radial lines every 30°
-        ctx.strokeStyle = 'rgba(99,179,237,0.06)';
-        for (let deg = -90; deg <= 90; deg += 30) {
-            const rad = degToRad(deg) - Math.PI / 2;
-            // Only within FOV cone
-            if (Math.abs(rad + Math.PI / 2) > fovHalf + 0.01)
-                continue;
-            const len = (this.config.max_range + 500) * scale;
-            ctx.beginPath();
-            ctx.moveTo(sx, sy);
-            ctx.lineTo(sx + Math.cos(rad) * len, sy + Math.sin(rad) * len);
-            ctx.stroke();
-        }
-        ctx.restore();
-    }
-    _drawFOV(w, h) {
-        const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
-        const fovHalf = degToRad(this.config.fov_angle / 2);
-        const maxR = this.config.max_range * scale;
-        ctx.save();
-        // Fill the FOV cone
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.arc(sx, sy, maxR, -Math.PI / 2 - fovHalf, -Math.PI / 2 + fovHalf);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(56,189,248,0.06)';
-        ctx.fill();
-        // FOV border lines
-        ctx.strokeStyle = 'rgba(56,189,248,0.4)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + Math.cos(-Math.PI / 2 - fovHalf) * maxR, sy + Math.sin(-Math.PI / 2 - fovHalf) * maxR);
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + Math.cos(-Math.PI / 2 + fovHalf) * maxR, sy + Math.sin(-Math.PI / 2 + fovHalf) * maxR);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-    }
-    _drawSweep(w, h) {
-        const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
-        const maxR = this.config.max_range * scale;
-        const sweepAngle = this.sweepAngle;
-        ctx.save();
-        // Create a conic gradient-like sweep by drawing a filled arc sector
-        const trailArc = Math.PI / 3; // 60° trail
-        // Fallback: draw multiple overlapping arcs with decreasing opacity
-        const steps = 20;
-        for (let i = 0; i < steps; i++) {
-            const alpha = ((steps - i) / steps) * 0.25;
-            const startAngle = sweepAngle - trailArc * (i / steps);
-            const endAngle = sweepAngle - trailArc * ((i + 1) / steps);
-            ctx.beginPath();
-            ctx.moveTo(sx, sy);
-            ctx.arc(sx, sy, maxR, startAngle, endAngle, true);
-            ctx.closePath();
-            ctx.fillStyle = `rgba(99,179,237,${alpha})`;
-            ctx.fill();
-        }
-        // Leading edge line
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + Math.cos(sweepAngle) * maxR, sy + Math.sin(sweepAngle) * maxR);
-        ctx.strokeStyle = 'rgba(99,179,237,0.7)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        ctx.restore();
-    }
-    _drawFurniture(furniture, w, h) {
-        if (furniture.length === 0)
-            return;
-        const ctx = this.ctx;
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        ctx.save();
-        ctx.fillStyle = 'rgba(148,163,184,0.12)';
-        ctx.strokeStyle = 'rgba(148,163,184,0.5)';
-        ctx.lineWidth = 1;
-        for (const f of furniture) {
-            const cx = sx + f.x * scale;
-            const cy = sy - f.y * scale;
-            const pw = f.width * scale;
-            const ph = f.height * scale;
-            const rot = degToRad(f.rotation);
-            ctx.save();
-            ctx.translate(cx, cy);
-            ctx.rotate(rot);
-            ctx.strokeRect(-pw / 2, -ph / 2, pw, ph);
-            ctx.fillRect(-pw / 2, -ph / 2, pw, ph);
-            ctx.restore();
-        }
-        ctx.restore();
-    }
-    _drawZones(zones, _targets, w, h) {
-        if (zones.length === 0)
-            return;
-        const ctx = this.ctx;
-        ctx.save();
-        for (const zone of zones) {
-            if (zone.vertices.length < 2)
-                continue;
-            const pts = zone.vertices.map(v => this._toCanvas(v.x, v.y, w, h));
-            // Fill
-            ctx.beginPath();
-            ctx.moveTo(pts[0].x, pts[0].y);
-            for (let i = 1; i < pts.length; i++)
-                ctx.lineTo(pts[i].x, pts[i].y);
-            ctx.closePath();
-            if (zone.occupied) {
-                ctx.fillStyle = 'rgba(167,139,250,0.3)';
-                ctx.strokeStyle = 'rgba(167,139,250,0.9)';
-            }
-            else {
-                ctx.fillStyle = 'rgba(139,92,246,0.15)';
-                ctx.strokeStyle = zone.color || 'rgba(139,92,246,0.7)';
-            }
-            ctx.lineWidth = 1.5;
-            ctx.fill();
-            ctx.stroke();
-            // Zone name label
-            if (pts.length >= 3) {
-                const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
-                const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
-                ctx.font = '11px system-ui';
-                ctx.fillStyle = zone.occupied ? 'rgba(167,139,250,0.9)' : 'rgba(139,92,246,0.8)';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(zone.name, cx, cy);
-            }
-        }
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'alphabetic';
-        ctx.restore();
-    }
-    _drawTrails(targets, w, h) {
-        const ctx = this.ctx;
-        ctx.save();
-        for (const target of targets) {
-            if (!target.active || target.trail.length < 2)
-                continue;
-            for (let i = 0; i < target.trail.length; i++) {
-                const pos = this._toCanvas(target.trail[i].x, target.trail[i].y, w, h);
-                const alpha = (i / target.trail.length) * TRAIL_OPACITY_MAX;
-                const radius = 3 + (i / target.trail.length) * 2;
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-                ctx.fillStyle = target.color.replace(')', `, ${alpha})`).replace('rgb(', 'rgba(');
-                // Handle hex colors
-                ctx.fillStyle = hexToRgba(target.color, alpha);
-                ctx.fill();
-            }
-        }
-        ctx.restore();
-    }
-    _drawTargets(targets, w, h) {
-        const ctx = this.ctx;
-        ctx.save();
-        for (const target of targets) {
-            if (!target.active)
-                continue;
-            const pos = this._toCanvas(target.x, target.y, w, h);
-            // Glow
-            ctx.shadowBlur = 16;
-            ctx.shadowColor = target.color;
-            // Outer ring
-            ctx.beginPath();
-            ctx.arc(pos.x, pos.y, 10, 0, Math.PI * 2);
-            ctx.strokeStyle = hexToRgba(target.color, 0.4);
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-            // Main dot
-            ctx.beginPath();
-            ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
-            ctx.fillStyle = target.color;
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            // Label
-            ctx.font = '10px system-ui';
-            ctx.fillStyle = 'rgba(226,232,240,0.8)';
-            ctx.fillText(target.label || `T${target.id}`, pos.x + 8, pos.y - 8);
-        }
-        ctx.restore();
-    }
-    _drawSensor(w, h) {
-        const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        ctx.save();
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = '#38bdf8';
-        ctx.beginPath();
-        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.font = '10px system-ui';
-        ctx.fillStyle = 'rgba(99,179,237,0.6)';
-        ctx.textAlign = 'center';
-        ctx.fillText('SENSOR', sx, sy + 18);
-        ctx.textAlign = 'left';
-        ctx.restore();
-    }
-    _drawDrawingOverlay(state, w, h) {
-        if (state.mode !== 'draw-zone')
-            return;
-        const ctx = this.ctx;
-        const pts = state.zoneVertices.map(v => this._toCanvas(v.x, v.y, w, h));
-        if (pts.length === 0)
-            return;
-        ctx.save();
-        ctx.strokeStyle = 'rgba(139,92,246,0.8)';
-        ctx.fillStyle = 'rgba(139,92,246,0.15)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([6, 4]);
-        // Drawn edges
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++)
-            ctx.lineTo(pts[i].x, pts[i].y);
-        // Preview line to mouse
-        if (state.mousePos) {
-            ctx.lineTo(state.mousePos.x, state.mousePos.y);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // Vertex dots
-        for (let i = 0; i < pts.length; i++) {
-            ctx.beginPath();
-            ctx.arc(pts[i].x, pts[i].y, i === 0 ? 7 : 4, 0, Math.PI * 2);
-            if (i === 0 && state.hoveredVertexIndex === 0) {
-                ctx.strokeStyle = 'rgba(167,139,250,1)';
-                ctx.fillStyle = 'rgba(167,139,250,0.5)';
-                ctx.fill();
-            }
-            else {
-                ctx.fillStyle = 'rgba(139,92,246,0.8)';
-                ctx.fill();
-            }
-            ctx.strokeStyle = 'rgba(139,92,246,0.9)';
-            ctx.stroke();
-        }
-        ctx.restore();
-    }
-    _drawTooltip(mmPos, _w, _h) {
-    }
-}
-/**
- * Convert a hex color (#rrggbb or #rgb) to rgba string.
- */
-function hexToRgba(hex, alpha) {
-    if (hex.startsWith('rgba') || hex.startsWith('rgb')) {
-        // Already rgb, just apply alpha
-        return hex.replace(/[\d.]+\)$/, `${alpha})`);
-    }
-    let h = hex.replace('#', '');
-    if (h.length === 3)
-        h = h.split('').map(c => c + c).join('');
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    return `rgba(${r},${g},${b},${alpha})`;
-}
-
-const INACTIVE_TIMEOUT_MS = 2000;
-const DEAD_ZONE_MM = 50; // target ignored if within 50mm of origin
-const TRAIL_CHANGE_THRESHOLD_MM = 20;
-/**
- * TargetTracker manages live target state including trail buffers and
- * inactive detection.
- */
-class TargetTracker {
-    constructor(config) {
-        this.targets = new Map();
-        this.config = config;
-        this._initTargets();
-    }
-    updateConfig(config) {
-        this.config = config;
-        // Add any new target IDs
-        for (const tc of config.targets) {
-            if (!this.targets.has(tc.id)) {
-                this.targets.set(tc.id, this._createTarget(tc.id, tc.color, tc.label));
-            }
-            else {
-                const t = this.targets.get(tc.id);
-                t.color = tc.color;
-                t.label = tc.label;
-            }
-        }
-    }
-    _initTargets() {
-        for (const tc of this.config.targets) {
-            this.targets.set(tc.id, this._createTarget(tc.id, tc.color, tc.label));
-        }
-    }
-    _createTarget(id, color, label) {
-        return {
-            id,
-            x: 0,
-            y: 0,
-            speed: 0,
-            active: false,
-            lastSeen: 0,
-            trail: [],
-            color,
-            label,
-        };
-    }
-    /**
-     * Update a target's axis value from a HA entity state change.
-     * Returns true if the update caused a meaningful position change.
-     */
-    updateAxis(targetId, axis, value) {
-        const target = this.targets.get(targetId);
-        if (!target)
-            return false;
-        if (axis === 'x')
-            target.x = value !== null && value !== void 0 ? value : 0;
-        else if (axis === 'y')
-            target.y = value !== null && value !== void 0 ? value : 0;
-        else if (axis === 'speed')
-            target.speed = value !== null && value !== void 0 ? value : 0;
-        const isActive = (Math.abs(target.x) > DEAD_ZONE_MM || Math.abs(target.y) > DEAD_ZONE_MM) &&
-            target.y >= 0;
-        if (isActive) {
-            const prevPos = target.trail.length > 0 ? target.trail[target.trail.length - 1] : null;
-            const dist = prevPos
-                ? Math.sqrt((target.x - prevPos.x) ** 2 + (target.y - prevPos.y) ** 2)
-                : Infinity;
-            target.active = true;
-            target.lastSeen = Date.now();
-            // Add to trail only if moved enough
-            if (dist >= TRAIL_CHANGE_THRESHOLD_MM) {
-                target.trail.push({ x: target.x, y: target.y });
-                if (target.trail.length > this.config.trail_length) {
-                    target.trail.shift();
-                }
-            }
-        }
-        return true;
-    }
-    /**
-     * Mark targets inactive if not seen for INACTIVE_TIMEOUT_MS.
-     */
-    tick() {
-        const now = Date.now();
-        for (const target of this.targets.values()) {
-            if (target.active && now - target.lastSeen > INACTIVE_TIMEOUT_MS) {
-                target.active = false;
-                target.trail = [];
-            }
-        }
-    }
-    getTargets() {
-        return Array.from(this.targets.values());
-    }
-    /**
-     * Check which zones are occupied by any active target.
-     * Returns a Set of zone IDs that are occupied.
-     */
-    getOccupiedZones(zones) {
-        const occupied = new Set();
-        const activeTargets = Array.from(this.targets.values()).filter(t => t.active);
-        for (const zone of zones) {
-            if (zone.vertices.length < 3)
-                continue;
-            for (const target of activeTargets) {
-                if (pointInPolygon({ x: target.x, y: target.y }, zone.vertices)) {
-                    occupied.add(zone.id);
-                    break;
-                }
-            }
-        }
-        return occupied;
-    }
-}
-
 /**
  * Draw a sofa shape on canvas.
  */
@@ -938,6 +455,514 @@ function getFurnitureType(id) {
     return FURNITURE_TYPES.find(f => f.id === id);
 }
 
+const SENSOR_MARGIN$3 = 40;
+const TRAIL_OPACITY_MAX = 0.6;
+/**
+ * RadarCanvas handles all canvas drawing for the radar visualization.
+ */
+class RadarCanvas {
+    constructor(canvas, config) {
+        this.sweepAngle = -Math.PI / 2; // start pointing up
+        this.sweepAnimId = null;
+        this.lastSweepTime = 0;
+        this.dirty = true;
+        this.canvas = canvas;
+        const ctx = canvas.getContext('2d');
+        if (!ctx)
+            throw new Error('Could not get 2D context');
+        this.ctx = ctx;
+        this.config = config;
+    }
+    updateConfig(config) {
+        this.config = config;
+        this.dirty = true;
+    }
+    markDirty() {
+        this.dirty = true;
+    }
+    startAnimation() {
+        const animate = (time) => {
+            const dt = this.lastSweepTime ? time - this.lastSweepTime : 16;
+            this.lastSweepTime = time;
+            // ~1 RPM = 2π / 60s
+            if (this.config.show_sweep) {
+                this.sweepAngle += (2 * Math.PI * dt) / 60000;
+            }
+            this.dirty = true;
+            this.sweepAnimId = requestAnimationFrame(animate);
+        };
+        this.sweepAnimId = requestAnimationFrame(animate);
+    }
+    stopAnimation() {
+        if (this.sweepAnimId !== null) {
+            cancelAnimationFrame(this.sweepAnimId);
+            this.sweepAnimId = null;
+        }
+    }
+    resize(width, height) {
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.dirty = true;
+    }
+    /**
+     * Main render function. Call on rAF.
+     */
+    render(targets, zones, furniture, drawingState, hoveredPos) {
+        if (!this.dirty)
+            return;
+        this.dirty = false;
+        const { ctx, canvas, config } = this;
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+        if (config.show_grid)
+            this._drawGrid(w, h);
+        this._drawFOV(w, h);
+        if (config.show_sweep)
+            this._drawSweep(w, h);
+        this._drawFurniture(furniture, w, h);
+        this._drawZones(zones, targets, w, h);
+        if (config.show_trails)
+            this._drawTrails(targets, w, h);
+        this._drawTargets(targets, w, h);
+        this._drawSensor(w, h);
+        this._drawDrawingOverlay(drawingState, w, h);
+        if (hoveredPos) {
+            this._drawTooltip(hoveredPos, w, h);
+        }
+    }
+    _sensorPos(w, h) {
+        return { x: w / 2, y: h - SENSOR_MARGIN$3 };
+    }
+    _toCanvas(mmX, mmY, w, h) {
+        return mmToCanvas(mmX, mmY, w, h, this.config.max_range, SENSOR_MARGIN$3);
+    }
+    get _isLight() {
+        return this.config.color_scheme === 'light';
+    }
+    _drawGrid(w, h) {
+        const ctx = this.ctx;
+        const { x: sx, y: sy } = this._sensorPos(w, h);
+        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
+        const fovHalf = degToRad(this.config.fov_angle / 2);
+        const light = this._isLight;
+        const maxRings = Math.ceil(this.config.max_range / 1000);
+        ctx.save();
+        ctx.strokeStyle = light ? 'rgba(59,130,246,0.12)' : 'rgba(99,179,237,0.08)';
+        ctx.lineWidth = 1;
+        // Polar rings every 1000mm
+        for (let r = 1; r <= maxRings; r++) {
+            const pxR = r * 1000 * scale;
+            ctx.beginPath();
+            ctx.arc(sx, sy, pxR, -Math.PI, 0);
+            ctx.stroke();
+            // Range label
+            ctx.fillStyle = light ? 'rgba(59,130,246,0.5)' : 'rgba(99,179,237,0.3)';
+            ctx.font = '10px system-ui';
+            ctx.fillText(`${r}m`, sx + 4, sy - pxR + 3);
+        }
+        // Radial lines every 30°
+        ctx.strokeStyle = light ? 'rgba(59,130,246,0.08)' : 'rgba(99,179,237,0.06)';
+        for (let deg = -90; deg <= 90; deg += 30) {
+            const rad = degToRad(deg) - Math.PI / 2;
+            // Only within FOV cone
+            if (Math.abs(rad + Math.PI / 2) > fovHalf + 0.01)
+                continue;
+            const len = (this.config.max_range + 500) * scale;
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(sx + Math.cos(rad) * len, sy + Math.sin(rad) * len);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+    _drawFOV(w, h) {
+        const ctx = this.ctx;
+        const { x: sx, y: sy } = this._sensorPos(w, h);
+        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
+        const fovHalf = degToRad(this.config.fov_angle / 2);
+        const maxR = this.config.max_range * scale;
+        const light = this._isLight;
+        ctx.save();
+        // Fill the FOV cone
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.arc(sx, sy, maxR, -Math.PI / 2 - fovHalf, -Math.PI / 2 + fovHalf);
+        ctx.closePath();
+        ctx.fillStyle = light ? 'rgba(14,165,233,0.07)' : 'rgba(56,189,248,0.06)';
+        ctx.fill();
+        // FOV border lines
+        ctx.strokeStyle = light ? 'rgba(14,165,233,0.5)' : 'rgba(56,189,248,0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + Math.cos(-Math.PI / 2 - fovHalf) * maxR, sy + Math.sin(-Math.PI / 2 - fovHalf) * maxR);
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + Math.cos(-Math.PI / 2 + fovHalf) * maxR, sy + Math.sin(-Math.PI / 2 + fovHalf) * maxR);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
+    _drawSweep(w, h) {
+        const ctx = this.ctx;
+        const { x: sx, y: sy } = this._sensorPos(w, h);
+        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
+        const maxR = this.config.max_range * scale;
+        const sweepAngle = this.sweepAngle;
+        const light = this._isLight;
+        const sweepRgb = light ? '59,130,246' : '99,179,237';
+        ctx.save();
+        // Create a conic gradient-like sweep by drawing a filled arc sector
+        const trailArc = Math.PI / 3; // 60° trail
+        // Fallback: draw multiple overlapping arcs with decreasing opacity
+        const steps = 20;
+        for (let i = 0; i < steps; i++) {
+            const alpha = ((steps - i) / steps) * 0.25;
+            const startAngle = sweepAngle - trailArc * (i / steps);
+            const endAngle = sweepAngle - trailArc * ((i + 1) / steps);
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.arc(sx, sy, maxR, startAngle, endAngle, true);
+            ctx.closePath();
+            ctx.fillStyle = `rgba(${sweepRgb},${alpha})`;
+            ctx.fill();
+        }
+        // Leading edge line
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + Math.cos(sweepAngle) * maxR, sy + Math.sin(sweepAngle) * maxR);
+        ctx.strokeStyle = `rgba(${sweepRgb},0.7)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+    }
+    _drawFurniture(furniture, w, h) {
+        if (furniture.length === 0)
+            return;
+        const ctx = this.ctx;
+        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
+        const { x: sx, y: sy } = this._sensorPos(w, h);
+        const light = this._isLight;
+        ctx.save();
+        for (const f of furniture) {
+            const def = getFurnitureType(f.type);
+            const cx = sx + f.x * scale;
+            const cy = sy - f.y * scale;
+            const pw = f.width * scale;
+            const ph = f.height * scale;
+            const rot = degToRad(f.rotation);
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(rot);
+            if (f.selected) {
+                ctx.fillStyle = light ? 'rgba(100,116,139,0.2)' : 'rgba(148,163,184,0.22)';
+                ctx.strokeStyle = light ? 'rgba(2,132,199,0.85)' : 'rgba(56,189,248,0.8)';
+                ctx.lineWidth = 1.5;
+            }
+            else {
+                ctx.fillStyle = light ? 'rgba(100,116,139,0.1)' : 'rgba(148,163,184,0.12)';
+                ctx.strokeStyle = light ? 'rgba(100,116,139,0.6)' : 'rgba(148,163,184,0.5)';
+                ctx.lineWidth = 1;
+            }
+            if (def) {
+                def.drawFn(ctx, -pw / 2, -ph / 2, pw, ph);
+            }
+            else {
+                // Fallback: plain rectangle
+                ctx.fillRect(-pw / 2, -ph / 2, pw, ph);
+                ctx.strokeRect(-pw / 2, -ph / 2, pw, ph);
+            }
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+    _drawZones(zones, _targets, w, h) {
+        if (zones.length === 0)
+            return;
+        const ctx = this.ctx;
+        ctx.save();
+        for (const zone of zones) {
+            if (zone.vertices.length < 2)
+                continue;
+            const pts = zone.vertices.map(v => this._toCanvas(v.x, v.y, w, h));
+            // Fill
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++)
+                ctx.lineTo(pts[i].x, pts[i].y);
+            ctx.closePath();
+            if (zone.occupied) {
+                ctx.fillStyle = 'rgba(167,139,250,0.3)';
+                ctx.strokeStyle = 'rgba(167,139,250,0.9)';
+            }
+            else {
+                ctx.fillStyle = 'rgba(139,92,246,0.15)';
+                ctx.strokeStyle = zone.color || 'rgba(139,92,246,0.7)';
+            }
+            ctx.lineWidth = 1.5;
+            ctx.fill();
+            ctx.stroke();
+            // Zone name label
+            if (pts.length >= 3) {
+                const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+                const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+                ctx.font = '11px system-ui';
+                ctx.fillStyle = zone.occupied ? 'rgba(167,139,250,0.9)' : 'rgba(139,92,246,0.8)';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(zone.name, cx, cy);
+            }
+        }
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.restore();
+    }
+    _drawTrails(targets, w, h) {
+        const ctx = this.ctx;
+        ctx.save();
+        for (const target of targets) {
+            if (!target.active || target.trail.length < 2)
+                continue;
+            for (let i = 0; i < target.trail.length; i++) {
+                const pos = this._toCanvas(target.trail[i].x, target.trail[i].y, w, h);
+                const alpha = (i / target.trail.length) * TRAIL_OPACITY_MAX;
+                const radius = 3 + (i / target.trail.length) * 2;
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = target.color.replace(')', `, ${alpha})`).replace('rgb(', 'rgba(');
+                // Handle hex colors
+                ctx.fillStyle = hexToRgba(target.color, alpha);
+                ctx.fill();
+            }
+        }
+        ctx.restore();
+    }
+    _drawTargets(targets, w, h) {
+        const ctx = this.ctx;
+        const light = this._isLight;
+        ctx.save();
+        for (const target of targets) {
+            if (!target.active)
+                continue;
+            const pos = this._toCanvas(target.x, target.y, w, h);
+            // Glow
+            ctx.shadowBlur = light ? 8 : 16;
+            ctx.shadowColor = target.color;
+            // Outer ring
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 10, 0, Math.PI * 2);
+            ctx.strokeStyle = hexToRgba(target.color, 0.4);
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            // Main dot
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = target.color;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            // Label
+            ctx.font = '10px system-ui';
+            ctx.fillStyle = light ? 'rgba(30,41,59,0.85)' : 'rgba(226,232,240,0.8)';
+            ctx.fillText(target.label || `T${target.id}`, pos.x + 8, pos.y - 8);
+        }
+        ctx.restore();
+    }
+    _drawSensor(w, h) {
+        const ctx = this.ctx;
+        const { x: sx, y: sy } = this._sensorPos(w, h);
+        const light = this._isLight;
+        const sensorColor = light ? '#0284c7' : '#38bdf8';
+        ctx.save();
+        ctx.shadowBlur = light ? 8 : 12;
+        ctx.shadowColor = sensorColor;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+        ctx.fillStyle = sensorColor;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.font = '10px system-ui';
+        ctx.fillStyle = light ? 'rgba(2,132,199,0.7)' : 'rgba(99,179,237,0.6)';
+        ctx.textAlign = 'center';
+        ctx.fillText('SENSOR', sx, sy + 18);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+    _drawDrawingOverlay(state, w, h) {
+        if (state.mode !== 'draw-zone')
+            return;
+        const ctx = this.ctx;
+        const pts = state.zoneVertices.map(v => this._toCanvas(v.x, v.y, w, h));
+        if (pts.length === 0)
+            return;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(139,92,246,0.8)';
+        ctx.fillStyle = 'rgba(139,92,246,0.15)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        // Drawn edges
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++)
+            ctx.lineTo(pts[i].x, pts[i].y);
+        // Preview line to mouse
+        if (state.mousePos) {
+            ctx.lineTo(state.mousePos.x, state.mousePos.y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Vertex dots
+        for (let i = 0; i < pts.length; i++) {
+            ctx.beginPath();
+            ctx.arc(pts[i].x, pts[i].y, i === 0 ? 7 : 4, 0, Math.PI * 2);
+            if (i === 0 && state.hoveredVertexIndex === 0) {
+                ctx.strokeStyle = 'rgba(167,139,250,1)';
+                ctx.fillStyle = 'rgba(167,139,250,0.5)';
+                ctx.fill();
+            }
+            else {
+                ctx.fillStyle = 'rgba(139,92,246,0.8)';
+                ctx.fill();
+            }
+            ctx.strokeStyle = 'rgba(139,92,246,0.9)';
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+    _drawTooltip(mmPos, _w, _h) {
+    }
+}
+/**
+ * Convert a hex color (#rrggbb or #rgb) to rgba string.
+ */
+function hexToRgba(hex, alpha) {
+    if (hex.startsWith('rgba') || hex.startsWith('rgb')) {
+        // Already rgb, just apply alpha
+        return hex.replace(/[\d.]+\)$/, `${alpha})`);
+    }
+    let h = hex.replace('#', '');
+    if (h.length === 3)
+        h = h.split('').map(c => c + c).join('');
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+const INACTIVE_TIMEOUT_MS = 2000;
+const DEAD_ZONE_MM = 50; // target ignored if within 50mm of origin
+const TRAIL_CHANGE_THRESHOLD_MM = 20;
+/**
+ * TargetTracker manages live target state including trail buffers and
+ * inactive detection.
+ */
+class TargetTracker {
+    constructor(config) {
+        this.targets = new Map();
+        this.config = config;
+        this._initTargets();
+    }
+    updateConfig(config) {
+        this.config = config;
+        // Add any new target IDs
+        for (const tc of config.targets) {
+            if (!this.targets.has(tc.id)) {
+                this.targets.set(tc.id, this._createTarget(tc.id, tc.color, tc.label));
+            }
+            else {
+                const t = this.targets.get(tc.id);
+                t.color = tc.color;
+                t.label = tc.label;
+            }
+        }
+    }
+    _initTargets() {
+        for (const tc of this.config.targets) {
+            this.targets.set(tc.id, this._createTarget(tc.id, tc.color, tc.label));
+        }
+    }
+    _createTarget(id, color, label) {
+        return {
+            id,
+            x: 0,
+            y: 0,
+            speed: 0,
+            active: false,
+            lastSeen: 0,
+            trail: [],
+            color,
+            label,
+        };
+    }
+    /**
+     * Update a target's axis value from a HA entity state change.
+     * Returns true if the update caused a meaningful position change.
+     */
+    updateAxis(targetId, axis, value) {
+        const target = this.targets.get(targetId);
+        if (!target)
+            return false;
+        if (axis === 'x')
+            target.x = value !== null && value !== void 0 ? value : 0;
+        else if (axis === 'y')
+            target.y = value !== null && value !== void 0 ? value : 0;
+        else if (axis === 'speed')
+            target.speed = value !== null && value !== void 0 ? value : 0;
+        const isActive = (Math.abs(target.x) > DEAD_ZONE_MM || Math.abs(target.y) > DEAD_ZONE_MM) &&
+            target.y >= 0;
+        if (isActive) {
+            const prevPos = target.trail.length > 0 ? target.trail[target.trail.length - 1] : null;
+            const dist = prevPos
+                ? Math.sqrt((target.x - prevPos.x) ** 2 + (target.y - prevPos.y) ** 2)
+                : Infinity;
+            target.active = true;
+            target.lastSeen = Date.now();
+            // Add to trail only if moved enough
+            if (dist >= TRAIL_CHANGE_THRESHOLD_MM) {
+                target.trail.push({ x: target.x, y: target.y });
+                if (target.trail.length > this.config.trail_length) {
+                    target.trail.shift();
+                }
+            }
+        }
+        return true;
+    }
+    /**
+     * Mark targets inactive if not seen for INACTIVE_TIMEOUT_MS.
+     */
+    tick() {
+        const now = Date.now();
+        for (const target of this.targets.values()) {
+            if (target.active && now - target.lastSeen > INACTIVE_TIMEOUT_MS) {
+                target.active = false;
+                target.trail = [];
+            }
+        }
+    }
+    getTargets() {
+        return Array.from(this.targets.values());
+    }
+    /**
+     * Check which zones are occupied by any active target.
+     * Returns a Set of zone IDs that are occupied.
+     */
+    getOccupiedZones(zones) {
+        const occupied = new Set();
+        const activeTargets = Array.from(this.targets.values()).filter(t => t.active);
+        for (const zone of zones) {
+            if (zone.vertices.length < 3)
+                continue;
+            for (const target of activeTargets) {
+                if (pointInPolygon({ x: target.x, y: target.y }, zone.vertices)) {
+                    occupied.add(zone.id);
+                    break;
+                }
+            }
+        }
+        return occupied;
+    }
+}
+
 const HANDLE_SIZE = 8;
 const SENSOR_MARGIN$2 = 40;
 const SNAP_GRID_MM = 100;
@@ -951,7 +976,7 @@ class FurnitureLayer {
         this.dragging = false;
         this.dragOffset = { x: 0, y: 0 };
         this.resizing = false;
-        this.rotating = false;
+        this.resizeAnchorMm = { x: 0, y: 0 };
         this.resizeHandleIndex = -1;
         this.snapToGridEnabled = true;
         this.config = config;
@@ -1018,12 +1043,30 @@ class FurnitureLayer {
                 for (let i = 0; i < handles.length; i++) {
                     if (distance({ x: canvasX, y: canvasY }, handles[i]) < HANDLE_SIZE + 2) {
                         if (i === 4) {
-                            // Rotation handle
-                            this.rotating = true;
+                            // Rotation handle - use index 4 as rotation sentinel
+                            this.resizing = false;
+                            this.resizeHandleIndex = 4;
                         }
                         else {
                             this.resizing = true;
                             this.resizeHandleIndex = i;
+                            // Anchor is the opposite corner in mm world space
+                            const rot = degToRad(item.rotation);
+                            const anchorIdx = (i + 2) % 4;
+                            const halfW = item.width / 2;
+                            const halfH = item.height / 2;
+                            // Corners in local mm space (y-up): TL=(-hw,+hh), TR=(+hw,+hh), BR=(+hw,-hh), BL=(-hw,-hh)
+                            const localCorners = [
+                                { x: -halfW, y: halfH },
+                                { x: halfW, y: halfH },
+                                { x: halfW, y: -halfH },
+                                { x: -halfW, y: -halfH },
+                            ];
+                            const lc = localCorners[anchorIdx];
+                            this.resizeAnchorMm = {
+                                x: item.x + lc.x * Math.cos(rot) - lc.y * Math.sin(rot),
+                                y: item.y + lc.x * Math.sin(rot) + lc.y * Math.cos(rot),
+                            };
                         }
                         return true;
                     }
@@ -1068,30 +1111,23 @@ class FurnitureLayer {
             item.x = mm.x - this.dragOffset.x;
             item.y = mm.y - this.dragOffset.y;
         }
-        else if (this.resizing && this.resizeHandleIndex >= 0) {
+        else if (this.resizing && this.resizeHandleIndex >= 0 && this.resizeHandleIndex < 4) {
             const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
-            const dx = mm.x - item.x;
-            const dy = item.y - mm.y;
-            switch (this.resizeHandleIndex) {
-                case 0:
-                    item.width = Math.max(100, Math.abs(dx) * 2);
-                    item.height = Math.max(100, Math.abs(dy) * 2);
-                    break;
-                case 1:
-                    item.width = Math.max(100, Math.abs(dx) * 2);
-                    item.height = Math.max(100, Math.abs(dy) * 2);
-                    break;
-                case 2:
-                    item.width = Math.max(100, Math.abs(dx) * 2);
-                    item.height = Math.max(100, Math.abs(dy) * 2);
-                    break;
-                case 3:
-                    item.width = Math.max(100, Math.abs(dx) * 2);
-                    item.height = Math.max(100, Math.abs(dy) * 2);
-                    break;
-            }
+            // Resize from anchor corner: the anchor corner stays fixed, the dragged corner follows the mouse.
+            // Transform the mouse-to-anchor vector into the item's local (unrotated) frame.
+            const rot = degToRad(item.rotation);
+            const dx = mm.x - this.resizeAnchorMm.x;
+            const dy = mm.y - this.resizeAnchorMm.y;
+            const localDx = dx * Math.cos(-rot) - dy * Math.sin(-rot);
+            const localDy = dx * Math.sin(-rot) + dy * Math.cos(-rot);
+            item.width = Math.max(100, Math.abs(localDx));
+            item.height = Math.max(100, Math.abs(localDy));
+            // Reposition center to midpoint of anchor and current mouse in world space
+            item.x = (this.resizeAnchorMm.x + mm.x) / 2;
+            item.y = (this.resizeAnchorMm.y + mm.y) / 2;
         }
-        else if (this.rotating) {
+        else if (this.resizeHandleIndex === 4) {
+            // Rotation
             const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
             const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
             const cx = sc.x + item.x * scale;
@@ -1103,7 +1139,6 @@ class FurnitureLayer {
     onMouseUp() {
         this.dragging = false;
         this.resizing = false;
-        this.rotating = false;
         this.resizeHandleIndex = -1;
     }
     deleteSelected() {
@@ -1527,6 +1562,7 @@ class ConfigEditor {
      */
     renderHTML() {
         const c = this.config;
+        const isLight = c.color_scheme === 'light';
         return `
       <div class="setting-group">
         <div class="setting-label">Detection</div>
@@ -1564,6 +1600,10 @@ class ConfigEditor {
             value="${c.trail_length}" aria-label="Trail length">
           <span class="setting-value">${c.trail_length}</span>
         </div>
+        <div class="setting-row">
+          <label for="cfg-light-mode">Light Mode</label>
+          <input type="checkbox" id="cfg-light-mode" ${isLight ? 'checked' : ''} aria-label="Enable light color scheme">
+        </div>
       </div>
 
       <div class="setting-group">
@@ -1589,6 +1629,7 @@ class ConfigEditor {
         const checkSweep = get('cfg-sweep');
         const checkTrails = get('cfg-trails');
         const rangeTrail = get('cfg-trail-len');
+        const checkLightMode = get('cfg-light-mode');
         rangeMax === null || rangeMax === void 0 ? void 0 : rangeMax.addEventListener('input', () => {
             const val = parseInt(rangeMax.value);
             this.onConfigChange({ max_range: val });
@@ -1618,6 +1659,9 @@ class ConfigEditor {
             const span = rangeTrail.nextElementSibling;
             if (span)
                 span.textContent = `${val}`;
+        });
+        checkLightMode === null || checkLightMode === void 0 ? void 0 : checkLightMode.addEventListener('change', () => {
+            this.onConfigChange({ color_scheme: checkLightMode.checked ? 'light' : 'dark' });
         });
         container.querySelectorAll('input[data-target-id]').forEach(el => {
             const input = el;
@@ -2038,7 +2082,7 @@ function buildEntityIds(deviceName, targetIds) {
     return result;
 }
 
-var cardCss = ":host {\n  display: block;\n  font-family: 'Inter', system-ui, -apple-system, sans-serif;\n  --radar-bg: #0a0e1a;\n  --radar-grid: rgba(99, 179, 237, 0.08);\n  --radar-sweep: rgba(99, 179, 237, 0.15);\n  --radar-fov: rgba(56, 189, 248, 0.06);\n  --radar-fov-border: rgba(56, 189, 248, 0.4);\n  --target-primary: #38bdf8;\n  --target-trail: rgba(56, 189, 248, 0.3);\n  --zone-fill: rgba(139, 92, 246, 0.15);\n  --zone-border: rgba(139, 92, 246, 0.7);\n  --zone-active: rgba(167, 139, 250, 0.3);\n  --furniture-fill: rgba(148, 163, 184, 0.12);\n  --furniture-border: rgba(148, 163, 184, 0.5);\n  --glass-surface: rgba(15, 23, 42, 0.8);\n  --glass-border: rgba(99, 179, 237, 0.12);\n  --text-primary: #e2e8f0;\n  --text-muted: rgba(148, 163, 184, 0.7);\n}\n\n.card-container {\n  background: var(--glass-surface);\n  border: 1px solid var(--glass-border);\n  border-radius: 16px;\n  backdrop-filter: blur(20px);\n  -webkit-backdrop-filter: blur(20px);\n  overflow: hidden;\n  color: var(--text-primary);\n}\n\n.card-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(15, 23, 42, 0.4);\n}\n\n.card-title {\n  font-size: 15px;\n  font-weight: 600;\n  letter-spacing: 0.02em;\n  color: var(--text-primary);\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title::before {\n  content: '';\n  display: inline-block;\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  background: #38bdf8;\n  box-shadow: 0 0 8px #38bdf8;\n  animation: pulse-dot 2s ease-in-out infinite;\n}\n\n@keyframes pulse-dot {\n  0%, 100% { opacity: 1; transform: scale(1); }\n  50% { opacity: 0.6; transform: scale(0.85); }\n}\n\n.header-actions {\n  display: flex;\n  gap: 8px;\n}\n\n.icon-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 6px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.icon-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.icon-btn.active {\n  background: rgba(56, 189, 248, 0.2);\n  border-color: rgba(56, 189, 248, 0.6);\n  color: #38bdf8;\n}\n\n.card-body {\n  display: flex;\n  flex-direction: row;\n  min-height: 400px;\n}\n\n.canvas-wrap {\n  flex: 1;\n  position: relative;\n  background: var(--radar-bg);\n  min-width: 0;\n}\n\ncanvas {\n  display: block;\n  width: 100%;\n  height: 100%;\n  cursor: crosshair;\n}\n\ncanvas.cursor-default {\n  cursor: default;\n}\n\ncanvas.cursor-crosshair {\n  cursor: crosshair;\n}\n\ncanvas.cursor-grab {\n  cursor: grab;\n}\n\ncanvas.cursor-grabbing {\n  cursor: grabbing;\n}\n\ncanvas.cursor-move {\n  cursor: move;\n}\n\n.sidebar {\n  width: 200px;\n  min-width: 160px;\n  background: rgba(10, 14, 26, 0.7);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  overflow-y: auto;\n  overflow-x: hidden;\n}\n\n.sidebar-section {\n  padding: 12px;\n  border-bottom: 1px solid rgba(99, 179, 237, 0.06);\n}\n\n.sidebar-label {\n  font-size: 10px;\n  font-weight: 700;\n  letter-spacing: 0.1em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n  margin-bottom: 8px;\n}\n\n.zone-item {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.zone-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n  margin-right: 6px;\n}\n\n.zone-name {\n  flex: 1;\n  color: var(--text-primary);\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.zone-status {\n  font-size: 10px;\n  padding: 2px 6px;\n  border-radius: 4px;\n  font-weight: 600;\n}\n\n.zone-status.active {\n  background: rgba(167, 139, 250, 0.25);\n  color: #a78bfa;\n}\n\n.zone-status.clear {\n  color: var(--text-muted);\n}\n\n.target-item {\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.target-header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  margin-bottom: 2px;\n}\n\n.target-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n}\n\n.target-label {\n  font-weight: 600;\n  color: var(--text-primary);\n}\n\n.target-inactive {\n  color: var(--text-muted);\n  font-style: italic;\n}\n\n.target-coords {\n  font-size: 11px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  padding-left: 14px;\n}\n\n.sidebar-actions {\n  padding: 12px;\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  margin-top: auto;\n}\n\n.action-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 7px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  text-align: left;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.action-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.action-btn.active {\n  background: rgba(139, 92, 246, 0.2);\n  border-color: rgba(139, 92, 246, 0.6);\n  color: #a78bfa;\n}\n\n/* Edit toolbar */\n.edit-toolbar {\n  padding: 8px 12px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(10, 14, 26, 0.5);\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  align-items: center;\n}\n\n.toolbar-group {\n  display: flex;\n  gap: 4px;\n  align-items: center;\n}\n\n.toolbar-separator {\n  width: 1px;\n  height: 20px;\n  background: var(--glass-border);\n  margin: 0 4px;\n}\n\n/* Furniture picker */\n.furniture-picker {\n  padding: 8px;\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 4px;\n}\n\n.furniture-btn {\n  background: rgba(99, 179, 237, 0.05);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 6px;\n  cursor: pointer;\n  padding: 6px 4px;\n  font-size: 10px;\n  color: var(--text-muted);\n  text-align: center;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n}\n\n.furniture-btn:hover {\n  background: rgba(99, 179, 237, 0.12);\n  border-color: rgba(99, 179, 237, 0.3);\n  color: var(--text-primary);\n}\n\n.furniture-btn.selected {\n  background: rgba(56, 189, 248, 0.15);\n  border-color: rgba(56, 189, 248, 0.5);\n  color: #38bdf8;\n}\n\n.furniture-btn-icon {\n  font-size: 16px;\n  line-height: 1;\n}\n\n.furniture-btn-label {\n  font-size: 9px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  max-width: 100%;\n}\n\n/* Settings overlay */\n.settings-overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  width: 280px;\n  background: rgba(10, 14, 26, 0.95);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  z-index: 100;\n  overflow-y: auto;\n  backdrop-filter: blur(20px);\n  transform: translateX(100%);\n  transition: transform 0.2s ease;\n}\n\n.settings-overlay.open {\n  transform: translateX(0);\n}\n\n.settings-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  font-weight: 600;\n}\n\n.settings-body {\n  padding: 12px 16px;\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n}\n\n.setting-group {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.setting-label {\n  font-size: 11px;\n  font-weight: 600;\n  letter-spacing: 0.05em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n}\n\n.setting-row {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.setting-row label {\n  font-size: 13px;\n  color: var(--text-primary);\n  flex: 1;\n}\n\n.setting-row input[type=\"range\"] {\n  flex: 1;\n  accent-color: #38bdf8;\n}\n\n.setting-row input[type=\"checkbox\"] {\n  accent-color: #38bdf8;\n  width: 16px;\n  height: 16px;\n}\n\n.setting-row input[type=\"color\"] {\n  width: 32px;\n  height: 24px;\n  border: 1px solid var(--glass-border);\n  border-radius: 4px;\n  cursor: pointer;\n  background: none;\n  padding: 0;\n}\n\n.setting-value {\n  font-size: 12px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  min-width: 36px;\n  text-align: right;\n}\n\n/* Zone name dialog */\n.zone-name-dialog {\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n  background: rgba(15, 23, 42, 0.98);\n  border: 1px solid rgba(99, 179, 237, 0.3);\n  border-radius: 12px;\n  padding: 20px;\n  z-index: 200;\n  min-width: 240px;\n  backdrop-filter: blur(20px);\n  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);\n}\n\n.zone-name-dialog h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0 0 12px 0;\n  color: var(--text-primary);\n}\n\n.zone-name-input {\n  width: 100%;\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  padding: 8px 10px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 13px;\n  box-sizing: border-box;\n  outline: none;\n}\n\n.zone-name-input:focus {\n  border-color: rgba(99, 179, 237, 0.5);\n  background: rgba(99, 179, 237, 0.12);\n}\n\n.dialog-actions {\n  display: flex;\n  gap: 8px;\n  margin-top: 12px;\n  justify-content: flex-end;\n}\n\n.btn-primary {\n  background: rgba(56, 189, 248, 0.2);\n  border: 1px solid rgba(56, 189, 248, 0.5);\n  border-radius: 6px;\n  color: #38bdf8;\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-primary:hover {\n  background: rgba(56, 189, 248, 0.3);\n}\n\n.btn-secondary {\n  background: transparent;\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-secondary:hover {\n  background: rgba(99, 179, 237, 0.08);\n}\n\n/* YAML export overlay */\n.yaml-overlay {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  background: rgba(10, 14, 26, 0.98);\n  z-index: 300;\n  display: flex;\n  flex-direction: column;\n  padding: 16px;\n  overflow-y: auto;\n}\n\n.yaml-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 12px;\n  flex-shrink: 0;\n}\n\n.yaml-header h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0;\n  color: var(--text-primary);\n}\n\n.yaml-block {\n  background: rgba(0, 0, 0, 0.4);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 8px;\n  padding: 12px;\n  flex: 1;\n  overflow-y: auto;\n  position: relative;\n}\n\n.yaml-code {\n  font-family: 'Fira Mono', 'Consolas', monospace;\n  font-size: 11px;\n  color: #94a3b8;\n  white-space: pre;\n  line-height: 1.5;\n}\n\n.copy-btn {\n  position: absolute;\n  top: 8px;\n  right: 8px;\n  background: rgba(99, 179, 237, 0.12);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 4px 8px;\n  font-size: 11px;\n  font-family: inherit;\n  transition: background 0.15s;\n}\n\n.copy-btn:hover {\n  background: rgba(99, 179, 237, 0.2);\n  color: var(--text-primary);\n}\n\n/* Tooltip */\n.tooltip {\n  position: absolute;\n  background: rgba(15, 23, 42, 0.95);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  padding: 5px 8px;\n  font-size: 11px;\n  color: var(--text-muted);\n  pointer-events: none;\n  z-index: 50;\n  white-space: nowrap;\n  font-variant-numeric: tabular-nums;\n}\n\n/* Responsive */\n@media (max-width: 500px) {\n  .card-body {\n    flex-direction: column;\n  }\n  .sidebar {\n    width: 100%;\n    border-left: none;\n    border-top: 1px solid var(--glass-border);\n    flex-direction: row;\n    flex-wrap: wrap;\n    max-height: 200px;\n    overflow-y: auto;\n  }\n  .sidebar-section {\n    flex: 1;\n    min-width: 140px;\n  }\n  .sidebar-actions {\n    flex-direction: row;\n    flex-wrap: wrap;\n    margin-top: 0;\n    padding: 8px;\n  }\n}\n";
+var cardCss = ":host {\n  display: block;\n  font-family: 'Inter', system-ui, -apple-system, sans-serif;\n  --radar-bg: #0a0e1a;\n  --radar-grid: rgba(99, 179, 237, 0.08);\n  --radar-sweep: rgba(99, 179, 237, 0.15);\n  --radar-fov: rgba(56, 189, 248, 0.06);\n  --radar-fov-border: rgba(56, 189, 248, 0.4);\n  --target-primary: #38bdf8;\n  --target-trail: rgba(56, 189, 248, 0.3);\n  --zone-fill: rgba(139, 92, 246, 0.15);\n  --zone-border: rgba(139, 92, 246, 0.7);\n  --zone-active: rgba(167, 139, 250, 0.3);\n  --furniture-fill: rgba(148, 163, 184, 0.12);\n  --furniture-border: rgba(148, 163, 184, 0.5);\n  --glass-surface: rgba(15, 23, 42, 0.8);\n  --glass-border: rgba(99, 179, 237, 0.12);\n  --text-primary: #e2e8f0;\n  --text-muted: rgba(148, 163, 184, 0.7);\n}\n\n/* Light color scheme */\n:host(.light-scheme) {\n  --radar-bg: #f0f4f8;\n  --radar-grid: rgba(59, 130, 246, 0.1);\n  --radar-sweep: rgba(59, 130, 246, 0.12);\n  --radar-fov: rgba(14, 165, 233, 0.07);\n  --radar-fov-border: rgba(14, 165, 233, 0.5);\n  --target-primary: #0284c7;\n  --target-trail: rgba(2, 132, 199, 0.3);\n  --zone-fill: rgba(109, 40, 217, 0.1);\n  --zone-border: rgba(109, 40, 217, 0.6);\n  --zone-active: rgba(139, 92, 246, 0.25);\n  --furniture-fill: rgba(100, 116, 139, 0.12);\n  --furniture-border: rgba(100, 116, 139, 0.55);\n  --glass-surface: rgba(255, 255, 255, 0.92);\n  --glass-border: rgba(59, 130, 246, 0.18);\n  --text-primary: #1e293b;\n  --text-muted: rgba(71, 85, 105, 0.8);\n}\n\n.card-container {\n  background: var(--glass-surface);\n  border: 1px solid var(--glass-border);\n  border-radius: 16px;\n  backdrop-filter: blur(20px);\n  -webkit-backdrop-filter: blur(20px);\n  overflow: hidden;\n  color: var(--text-primary);\n}\n\n.card-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(15, 23, 42, 0.4);\n}\n\n.card-title {\n  font-size: 15px;\n  font-weight: 600;\n  letter-spacing: 0.02em;\n  color: var(--text-primary);\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title::before {\n  content: '';\n  display: inline-block;\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  background: #38bdf8;\n  box-shadow: 0 0 8px #38bdf8;\n  animation: pulse-dot 2s ease-in-out infinite;\n}\n\n@keyframes pulse-dot {\n  0%, 100% { opacity: 1; transform: scale(1); }\n  50% { opacity: 0.6; transform: scale(0.85); }\n}\n\n.header-actions {\n  display: flex;\n  gap: 8px;\n}\n\n.icon-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 6px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.icon-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.icon-btn.active {\n  background: rgba(56, 189, 248, 0.2);\n  border-color: rgba(56, 189, 248, 0.6);\n  color: #38bdf8;\n}\n\n.card-body {\n  display: flex;\n  flex-direction: row;\n  min-height: 400px;\n}\n\n.canvas-wrap {\n  flex: 1;\n  position: relative;\n  background: var(--radar-bg);\n  min-width: 0;\n}\n\ncanvas {\n  display: block;\n  width: 100%;\n  height: 100%;\n  cursor: crosshair;\n}\n\ncanvas.cursor-default {\n  cursor: default;\n}\n\ncanvas.cursor-crosshair {\n  cursor: crosshair;\n}\n\ncanvas.cursor-grab {\n  cursor: grab;\n}\n\ncanvas.cursor-grabbing {\n  cursor: grabbing;\n}\n\ncanvas.cursor-move {\n  cursor: move;\n}\n\n.sidebar {\n  width: 200px;\n  min-width: 160px;\n  background: rgba(10, 14, 26, 0.7);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  overflow-y: auto;\n  overflow-x: hidden;\n}\n\n:host(.light-scheme) .sidebar {\n  background: rgba(241, 245, 249, 0.85);\n}\n\n:host(.light-scheme) .card-header {\n  background: rgba(248, 250, 252, 0.6);\n}\n\n:host(.light-scheme) .edit-toolbar {\n  background: rgba(241, 245, 249, 0.7);\n}\n\n:host(.light-scheme) .settings-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .zone-name-dialog {\n  background: rgba(255, 255, 255, 0.99);\n  border-color: rgba(59, 130, 246, 0.35);\n}\n\n:host(.light-scheme) .yaml-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .yaml-block {\n  background: rgba(241, 245, 249, 0.8);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .yaml-code {\n  color: #334155;\n}\n\n:host(.light-scheme) .icon-btn {\n  background: rgba(59, 130, 246, 0.08);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .icon-btn:hover {\n  background: rgba(59, 130, 246, 0.15);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .action-btn {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.18);\n}\n\n:host(.light-scheme) .action-btn:hover {\n  background: rgba(59, 130, 246, 0.14);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .furniture-btn {\n  background: rgba(59, 130, 246, 0.05);\n  border-color: rgba(59, 130, 246, 0.14);\n}\n\n:host(.light-scheme) .furniture-btn:hover {\n  background: rgba(59, 130, 246, 0.12);\n  border-color: rgba(59, 130, 246, 0.3);\n}\n\n:host(.light-scheme) .zone-name-input {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.2);\n  color: var(--text-primary);\n}\n\n.sidebar-section {\n  padding: 12px;\n  border-bottom: 1px solid rgba(99, 179, 237, 0.06);\n}\n\n.sidebar-label {\n  font-size: 10px;\n  font-weight: 700;\n  letter-spacing: 0.1em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n  margin-bottom: 8px;\n}\n\n.zone-item {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.zone-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n  margin-right: 6px;\n}\n\n.zone-name {\n  flex: 1;\n  color: var(--text-primary);\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.zone-status {\n  font-size: 10px;\n  padding: 2px 6px;\n  border-radius: 4px;\n  font-weight: 600;\n}\n\n.zone-status.active {\n  background: rgba(167, 139, 250, 0.25);\n  color: #a78bfa;\n}\n\n.zone-status.clear {\n  color: var(--text-muted);\n}\n\n.target-item {\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.target-header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  margin-bottom: 2px;\n}\n\n.target-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n}\n\n.target-label {\n  font-weight: 600;\n  color: var(--text-primary);\n}\n\n.target-inactive {\n  color: var(--text-muted);\n  font-style: italic;\n}\n\n.target-coords {\n  font-size: 11px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  padding-left: 14px;\n}\n\n.sidebar-actions {\n  padding: 12px;\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  margin-top: auto;\n}\n\n.action-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 7px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  text-align: left;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.action-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.action-btn.active {\n  background: rgba(139, 92, 246, 0.2);\n  border-color: rgba(139, 92, 246, 0.6);\n  color: #a78bfa;\n}\n\n/* Edit toolbar */\n.edit-toolbar {\n  padding: 8px 12px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(10, 14, 26, 0.5);\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  align-items: center;\n}\n\n.toolbar-group {\n  display: flex;\n  gap: 4px;\n  align-items: center;\n}\n\n.toolbar-separator {\n  width: 1px;\n  height: 20px;\n  background: var(--glass-border);\n  margin: 0 4px;\n}\n\n/* Furniture picker */\n.furniture-picker {\n  padding: 8px;\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 4px;\n}\n\n.furniture-btn {\n  background: rgba(99, 179, 237, 0.05);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 6px;\n  cursor: pointer;\n  padding: 6px 4px;\n  font-size: 10px;\n  color: var(--text-muted);\n  text-align: center;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n}\n\n.furniture-btn:hover {\n  background: rgba(99, 179, 237, 0.12);\n  border-color: rgba(99, 179, 237, 0.3);\n  color: var(--text-primary);\n}\n\n.furniture-btn.selected {\n  background: rgba(56, 189, 248, 0.15);\n  border-color: rgba(56, 189, 248, 0.5);\n  color: #38bdf8;\n}\n\n.furniture-btn-icon {\n  font-size: 16px;\n  line-height: 1;\n}\n\n.furniture-btn-label {\n  font-size: 9px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  max-width: 100%;\n}\n\n/* Settings overlay */\n.settings-overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  width: 280px;\n  background: rgba(10, 14, 26, 0.95);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  z-index: 100;\n  overflow-y: auto;\n  backdrop-filter: blur(20px);\n  transform: translateX(100%);\n  transition: transform 0.2s ease;\n}\n\n.settings-overlay.open {\n  transform: translateX(0);\n}\n\n.settings-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  font-weight: 600;\n}\n\n.settings-body {\n  padding: 12px 16px;\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n}\n\n.setting-group {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.setting-label {\n  font-size: 11px;\n  font-weight: 600;\n  letter-spacing: 0.05em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n}\n\n.setting-row {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.setting-row label {\n  font-size: 13px;\n  color: var(--text-primary);\n  flex: 1;\n}\n\n.setting-row input[type=\"range\"] {\n  flex: 1;\n  accent-color: #38bdf8;\n}\n\n.setting-row input[type=\"checkbox\"] {\n  accent-color: #38bdf8;\n  width: 16px;\n  height: 16px;\n}\n\n.setting-row input[type=\"color\"] {\n  width: 32px;\n  height: 24px;\n  border: 1px solid var(--glass-border);\n  border-radius: 4px;\n  cursor: pointer;\n  background: none;\n  padding: 0;\n}\n\n.setting-value {\n  font-size: 12px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  min-width: 36px;\n  text-align: right;\n}\n\n/* Zone name dialog */\n.zone-name-dialog {\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n  background: rgba(15, 23, 42, 0.98);\n  border: 1px solid rgba(99, 179, 237, 0.3);\n  border-radius: 12px;\n  padding: 20px;\n  z-index: 200;\n  min-width: 240px;\n  backdrop-filter: blur(20px);\n  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);\n}\n\n.zone-name-dialog h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0 0 12px 0;\n  color: var(--text-primary);\n}\n\n.zone-name-input {\n  width: 100%;\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  padding: 8px 10px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 13px;\n  box-sizing: border-box;\n  outline: none;\n}\n\n.zone-name-input:focus {\n  border-color: rgba(99, 179, 237, 0.5);\n  background: rgba(99, 179, 237, 0.12);\n}\n\n.dialog-actions {\n  display: flex;\n  gap: 8px;\n  margin-top: 12px;\n  justify-content: flex-end;\n}\n\n.btn-primary {\n  background: rgba(56, 189, 248, 0.2);\n  border: 1px solid rgba(56, 189, 248, 0.5);\n  border-radius: 6px;\n  color: #38bdf8;\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-primary:hover {\n  background: rgba(56, 189, 248, 0.3);\n}\n\n.btn-secondary {\n  background: transparent;\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-secondary:hover {\n  background: rgba(99, 179, 237, 0.08);\n}\n\n/* YAML export overlay */\n.yaml-overlay {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  background: rgba(10, 14, 26, 0.98);\n  z-index: 300;\n  display: flex;\n  flex-direction: column;\n  padding: 16px;\n  overflow-y: auto;\n}\n\n.yaml-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 12px;\n  flex-shrink: 0;\n}\n\n.yaml-header h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0;\n  color: var(--text-primary);\n}\n\n.yaml-block {\n  background: rgba(0, 0, 0, 0.4);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 8px;\n  padding: 12px;\n  flex: 1;\n  overflow-y: auto;\n  position: relative;\n}\n\n.yaml-code {\n  font-family: 'Fira Mono', 'Consolas', monospace;\n  font-size: 11px;\n  color: #94a3b8;\n  white-space: pre;\n  line-height: 1.5;\n}\n\n.copy-btn {\n  position: absolute;\n  top: 8px;\n  right: 8px;\n  background: rgba(99, 179, 237, 0.12);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 4px 8px;\n  font-size: 11px;\n  font-family: inherit;\n  transition: background 0.15s;\n}\n\n.copy-btn:hover {\n  background: rgba(99, 179, 237, 0.2);\n  color: var(--text-primary);\n}\n\n/* Tooltip */\n.tooltip {\n  position: absolute;\n  background: rgba(15, 23, 42, 0.95);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  padding: 5px 8px;\n  font-size: 11px;\n  color: var(--text-muted);\n  pointer-events: none;\n  z-index: 50;\n  white-space: nowrap;\n  font-variant-numeric: tabular-nums;\n}\n\n/* Responsive */\n@media (max-width: 500px) {\n  .card-body {\n    flex-direction: column;\n  }\n  .sidebar {\n    width: 100%;\n    border-left: none;\n    border-top: 1px solid var(--glass-border);\n    flex-direction: row;\n    flex-wrap: wrap;\n    max-height: 200px;\n    overflow-y: auto;\n  }\n  .sidebar-section {\n    flex: 1;\n    min-width: 140px;\n  }\n  .sidebar-actions {\n    flex-direction: row;\n    flex-wrap: wrap;\n    margin-top: 0;\n    padding: 8px;\n  }\n}\n";
 
 var _a;
 const SENSOR_MARGIN = 40;
@@ -2085,6 +2129,8 @@ class LD2450RadarCard extends HTMLElement {
         this._historyIndex = -1;
         this._zoneNamePending = null;
         this._tickInterval = null;
+        this._dragPlacingId = null;
+        this._dragPlaceStartMm = null;
         this._shadow = this.attachShadow({ mode: 'open' });
     }
     // Called by HA to set the card config
@@ -2098,6 +2144,7 @@ class LD2450RadarCard extends HTMLElement {
             this._config.furniture = [];
         if (!this._config.zones)
             this._config.zones = [];
+        this._applyColorScheme();
         this._init();
     }
     set hass(hass) {
@@ -2124,6 +2171,24 @@ class LD2450RadarCard extends HTMLElement {
             this._tickInterval = null;
         }
         (_b = this._radarCanvas) === null || _b === void 0 ? void 0 : _b.stopAnimation();
+    }
+    _applyColorScheme() {
+        if (this._config.color_scheme === 'light') {
+            this.classList.add('light-scheme');
+        }
+        else {
+            this.classList.remove('light-scheme');
+        }
+    }
+    _toggleColorScheme() {
+        var _a, _b;
+        const next = this._config.color_scheme === 'light' ? 'dark' : 'light';
+        this._config = { ...this._config, color_scheme: next };
+        this._applyColorScheme();
+        (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.updateConfig(this._config);
+        (_b = this._radarCanvas) === null || _b === void 0 ? void 0 : _b.markDirty();
+        this._renderDOM();
+        this._setupCanvas();
     }
     _init() {
         this._tracker = new TargetTracker(this._config);
@@ -2162,14 +2227,20 @@ class LD2450RadarCard extends HTMLElement {
         </div>
       </div>
     `;
+        this._applyColorScheme();
         this._attachEventListeners();
     }
     _renderHeader() {
         var _a;
+        const isLight = this._config.color_scheme === 'light';
         return `
       <div class="card-header">
         <div class="card-title">${(_a = this._config.title) !== null && _a !== void 0 ? _a : 'LD2450 Radar'}</div>
         <div class="header-actions">
+          <button class="icon-btn ${isLight ? 'active' : ''}" id="btn-theme" aria-label="Toggle light/dark theme"
+            title="${isLight ? 'Switch to dark mode' : 'Switch to light mode'}">
+            ${isLight ? '☀️' : '🌙'}
+          </button>
           <button class="icon-btn ${this._isEditMode ? 'active' : ''}" id="btn-edit" aria-label="Toggle edit mode">
             ✏️ Edit
           </button>
@@ -2311,16 +2382,19 @@ class LD2450RadarCard extends HTMLElement {
     `;
     }
     _attachEventListeners() {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
         const $ = (id) => this._shadow.getElementById(id);
-        (_a = $('btn-edit')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', () => {
+        (_a = $('btn-theme')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', () => {
+            this._toggleColorScheme();
+        });
+        (_b = $('btn-edit')) === null || _b === void 0 ? void 0 : _b.addEventListener('click', () => {
             this._isEditMode = !this._isEditMode;
             if (!this._isEditMode)
                 this._editMode = 'none';
             this._renderDOM();
             this._setupCanvas();
         });
-        (_b = $('btn-settings')) === null || _b === void 0 ? void 0 : _b.addEventListener('click', () => {
+        (_c = $('btn-settings')) === null || _c === void 0 ? void 0 : _c.addEventListener('click', () => {
             var _a;
             this._showSettings = !this._showSettings;
             this._renderDOM();
@@ -2331,39 +2405,39 @@ class LD2450RadarCard extends HTMLElement {
                     (_a = this._configEditor) === null || _a === void 0 ? void 0 : _a.attachListeners(settingsBody);
             }
         });
-        (_c = $('btn-close-settings')) === null || _c === void 0 ? void 0 : _c.addEventListener('click', () => {
+        (_d = $('btn-close-settings')) === null || _d === void 0 ? void 0 : _d.addEventListener('click', () => {
             this._showSettings = false;
             this._renderDOM();
             this._setupCanvas();
         });
-        (_d = $('btn-close-yaml')) === null || _d === void 0 ? void 0 : _d.addEventListener('click', () => {
+        (_f = $('btn-close-yaml')) === null || _f === void 0 ? void 0 : _f.addEventListener('click', () => {
             this._showYaml = false;
             this._renderDOM();
             this._setupCanvas();
         });
-        (_f = $('btn-copy-yaml')) === null || _f === void 0 ? void 0 : _f.addEventListener('click', () => {
+        (_g = $('btn-copy-yaml')) === null || _g === void 0 ? void 0 : _g.addEventListener('click', () => {
             var _a;
             const pre = $('yaml-content');
             if (pre)
                 void navigator.clipboard.writeText((_a = pre.textContent) !== null && _a !== void 0 ? _a : '');
         });
-        (_g = $('btn-export-yaml')) === null || _g === void 0 ? void 0 : _g.addEventListener('click', () => {
+        (_h = $('btn-export-yaml')) === null || _h === void 0 ? void 0 : _h.addEventListener('click', () => {
             this._showYaml = true;
             this._renderDOM();
             this._setupCanvas();
         });
-        (_h = $('btn-draw-zone')) === null || _h === void 0 ? void 0 : _h.addEventListener('click', () => {
+        (_j = $('btn-draw-zone')) === null || _j === void 0 ? void 0 : _j.addEventListener('click', () => {
             this._startDrawingMode();
         });
-        (_j = $('btn-add-furniture')) === null || _j === void 0 ? void 0 : _j.addEventListener('click', () => {
+        (_k = $('btn-add-furniture')) === null || _k === void 0 ? void 0 : _k.addEventListener('click', () => {
             this._editMode = this._editMode === 'add-furniture' ? 'none' : 'add-furniture';
             this._isEditMode = this._editMode !== 'none';
             this._renderDOM();
             this._setupCanvas();
         });
-        (_k = $('btn-undo')) === null || _k === void 0 ? void 0 : _k.addEventListener('click', () => this._undo());
-        (_l = $('btn-redo')) === null || _l === void 0 ? void 0 : _l.addEventListener('click', () => this._redo());
-        (_m = $('btn-save')) === null || _m === void 0 ? void 0 : _m.addEventListener('click', () => void this._save());
+        (_l = $('btn-undo')) === null || _l === void 0 ? void 0 : _l.addEventListener('click', () => this._undo());
+        (_m = $('btn-redo')) === null || _m === void 0 ? void 0 : _m.addEventListener('click', () => this._redo());
+        (_o = $('btn-save')) === null || _o === void 0 ? void 0 : _o.addEventListener('click', () => void this._save());
         // Edit mode toolbar buttons
         this._shadow.querySelectorAll('[data-mode]').forEach(el => {
             el.addEventListener('click', () => {
@@ -2390,8 +2464,8 @@ class LD2450RadarCard extends HTMLElement {
             });
         });
         // Zone name dialog
-        (_o = $('btn-confirm-zone')) === null || _o === void 0 ? void 0 : _o.addEventListener('click', () => this._confirmZoneName());
-        (_p = $('btn-cancel-zone')) === null || _p === void 0 ? void 0 : _p.addEventListener('click', () => {
+        (_p = $('btn-confirm-zone')) === null || _p === void 0 ? void 0 : _p.addEventListener('click', () => this._confirmZoneName());
+        (_q = $('btn-cancel-zone')) === null || _q === void 0 ? void 0 : _q.addEventListener('click', () => {
             this._zoneNamePending = null;
             this._renderDOM();
             this._setupCanvas();
@@ -2467,7 +2541,7 @@ class LD2450RadarCard extends HTMLElement {
         (_a = canvas.parentNode) === null || _a === void 0 ? void 0 : _a.replaceChild(newCanvas, canvas);
         let mouseIsDown = false;
         newCanvas.addEventListener('mousemove', (e) => {
-            var _a, _b, _c, _d;
+            var _a, _b, _c, _d, _f, _g;
             const pos = this._getCanvasPos(newCanvas, e);
             const tooltip = this._shadow.getElementById('coord-tooltip');
             if (this._editMode === 'draw-zone' && this._zoneEditor) {
@@ -2475,10 +2549,25 @@ class LD2450RadarCard extends HTMLElement {
                 (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.markDirty();
             }
             if (mouseIsDown) {
-                if (this._editMode === 'select') {
-                    (_b = this._furnitureLayer) === null || _b === void 0 ? void 0 : _b.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
-                    (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
-                    (_d = this._radarCanvas) === null || _d === void 0 ? void 0 : _d.markDirty();
+                if (this._editMode === 'add-furniture' && this._dragPlacingId && this._dragPlaceStartMm) {
+                    // Update the dragged item's size and center based on current mouse position
+                    const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+                    const item = (_b = this._furnitureLayer) === null || _b === void 0 ? void 0 : _b.getItems().find(i => i.id === this._dragPlacingId);
+                    if (item) {
+                        const w = Math.abs(mm.x - this._dragPlaceStartMm.x);
+                        const h = Math.abs(mm.y - this._dragPlaceStartMm.y);
+                        item.width = Math.max(100, w);
+                        item.height = Math.max(100, h);
+                        item.x = (mm.x + this._dragPlaceStartMm.x) / 2;
+                        item.y = (mm.y + this._dragPlaceStartMm.y) / 2;
+                        // Config array is synced on mouseup; just mark dirty for live preview
+                        (_c = this._radarCanvas) === null || _c === void 0 ? void 0 : _c.markDirty();
+                    }
+                }
+                else if (this._editMode === 'select') {
+                    (_d = this._furnitureLayer) === null || _d === void 0 ? void 0 : _d.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
+                    (_f = this._zoneEditor) === null || _f === void 0 ? void 0 : _f.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
+                    (_g = this._radarCanvas) === null || _g === void 0 ? void 0 : _g.markDirty();
                 }
             }
             // Coordinate tooltip
@@ -2505,7 +2594,15 @@ class LD2450RadarCard extends HTMLElement {
             }
             else if (this._editMode === 'add-furniture' && this._selectedFurnitureType) {
                 this._pushHistory();
-                (_b = this._furnitureLayer) === null || _b === void 0 ? void 0 : _b.placeAt(this._selectedFurnitureType, pos.x, pos.y, newCanvas.width, newCanvas.height);
+                const startMm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+                const placed = (_b = this._furnitureLayer) === null || _b === void 0 ? void 0 : _b.placeAt(this._selectedFurnitureType, pos.x, pos.y, newCanvas.width, newCanvas.height);
+                if (placed) {
+                    // Start with a minimal size; the user drags to define the final dimensions
+                    placed.width = 100;
+                    placed.height = 100;
+                    this._dragPlacingId = placed.id;
+                    this._dragPlaceStartMm = { x: startMm.x, y: startMm.y };
+                }
                 this._config.furniture = (_d = (_c = this._furnitureLayer) === null || _c === void 0 ? void 0 : _c.getFurnitureConfigs()) !== null && _d !== void 0 ? _d : [];
                 (_f = this._radarCanvas) === null || _f === void 0 ? void 0 : _f.markDirty();
             }
@@ -2520,6 +2617,8 @@ class LD2450RadarCard extends HTMLElement {
         newCanvas.addEventListener('mouseup', () => {
             var _a, _b, _c, _d, _f, _g;
             mouseIsDown = false;
+            this._dragPlacingId = null;
+            this._dragPlaceStartMm = null;
             (_a = this._furnitureLayer) === null || _a === void 0 ? void 0 : _a.onMouseUp();
             (_b = this._zoneEditor) === null || _b === void 0 ? void 0 : _b.onMouseUp();
             this._config.furniture = (_d = (_c = this._furnitureLayer) === null || _c === void 0 ? void 0 : _c.getFurnitureConfigs()) !== null && _d !== void 0 ? _d : [];
@@ -2681,6 +2780,7 @@ class LD2450RadarCard extends HTMLElement {
     _onConfigPatch(patch) {
         var _a, _b, _c, _d, _f, _g;
         this._config = { ...this._config, ...patch };
+        this._applyColorScheme();
         (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.updateConfig(this._config);
         (_b = this._tracker) === null || _b === void 0 ? void 0 : _b.updateConfig(this._config);
         (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.updateConfig(this._config);
