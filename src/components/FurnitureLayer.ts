@@ -199,8 +199,7 @@ export class FurnitureLayer {
       const cy = itemCanvas.y;
       const angle = Math.atan2(canvasY - cy, canvasX - cx);
       // Adjust rotation to account for sensor facing direction
-      // The visual rotation needs to be offset by the facing angle
-      item.rotation = (angle * 180) / Math.PI + 90 - (layout.facingAngle * 180) / Math.PI - 90;
+      item.rotation = ((angle - layout.facingAngle) * 180) / Math.PI;
     }
   }
 

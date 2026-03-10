@@ -215,7 +215,7 @@ export class LD2450RadarCardEditor extends HTMLElement {
       'bottom-left', 'bottom', 'bottom-right',
     ];
 
-    const wallGridHTML = wallGrid.map((pos, _i) => {
+    const wallGridHTML = wallGrid.map((pos) => {
       if (pos === null) {
         return `<div class="wall-btn wall-center">Room</div>`;
       }

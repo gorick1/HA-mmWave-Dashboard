@@ -1211,8 +1211,7 @@ class FurnitureLayer {
             const cy = itemCanvas.y;
             const angle = Math.atan2(canvasY - cy, canvasX - cx);
             // Adjust rotation to account for sensor facing direction
-            // The visual rotation needs to be offset by the facing angle
-            item.rotation = (angle * 180) / Math.PI + 90 - (layout.facingAngle * 180) / Math.PI - 90;
+            item.rotation = ((angle - layout.facingAngle) * 180) / Math.PI;
         }
     }
     onMouseUp() {
@@ -2003,7 +2002,7 @@ class LD2450RadarCardEditor extends HTMLElement {
             'left', null, 'right',
             'bottom-left', 'bottom', 'bottom-right',
         ];
-        const wallGridHTML = wallGrid.map((pos, _i) => {
+        const wallGridHTML = wallGrid.map((pos) => {
             var _a, _b, _c;
             if (pos === null) {
                 return `<div class="wall-btn wall-center">Room</div>`;
