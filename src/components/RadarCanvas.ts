@@ -1,5 +1,5 @@
-import type { CardConfig, TargetData, Point } from '../types/index.js';
-import { mmToCanvas, getScale, degToRad } from '../utils/geometry.js';
+import type { CardConfig, TargetData, Point, SensorLayout } from '../types/index.js';
+import { mmToCanvas, getSensorLayout, degToRad } from '../utils/geometry.js';
 import { getFurnitureType } from '../utils/furniture-shapes.js';
 
 const SENSOR_MARGIN = 40;
@@ -80,14 +80,16 @@ export class RadarCanvas {
 
     ctx.clearRect(0, 0, w, h);
 
-    if (config.show_grid) this._drawGrid(w, h);
-    this._drawFOV(w, h);
-    if (config.show_sweep) this._drawSweep(w, h);
-    this._drawFurniture(furniture, w, h);
+    const layout = this._getLayout(w, h);
+
+    if (config.show_grid) this._drawGrid(w, h, layout);
+    this._drawFOV(w, h, layout);
+    if (config.show_sweep) this._drawSweep(w, h, layout);
+    this._drawFurniture(furniture, w, h, layout);
     this._drawZones(zones, targets, w, h);
     if (config.show_trails) this._drawTrails(targets, w, h);
     this._drawTargets(targets, w, h);
-    this._drawSensor(w, h);
+    this._drawSensor(w, h, layout);
     this._drawDrawingOverlay(drawingState, w, h);
 
     if (hoveredPos) {
@@ -95,22 +97,24 @@ export class RadarCanvas {
     }
   }
 
-  private _sensorPos(w: number, h: number): Point {
-    return { x: w / 2, y: h - SENSOR_MARGIN };
+  private _getLayout(w: number, h: number): SensorLayout {
+    return getSensorLayout(
+      this.config.sensor_position ?? 'bottom',
+      w, h, SENSOR_MARGIN, this.config.max_range
+    );
   }
 
   private _toCanvas(mmX: number, mmY: number, w: number, h: number): Point {
-    return mmToCanvas(mmX, mmY, w, h, this.config.max_range, SENSOR_MARGIN);
+    return mmToCanvas(mmX, mmY, w, h, this.config.max_range, SENSOR_MARGIN, this.config.sensor_position ?? 'bottom');
   }
 
   private get _isLight(): boolean {
     return this.config.color_scheme === 'light';
   }
 
-  private _drawGrid(w: number, h: number): void {
+  private _drawGrid(w: number, h: number, layout: SensorLayout): void {
     const ctx = this.ctx;
-    const { x: sx, y: sy } = this._sensorPos(w, h);
-    const scale = getScale(h, this.config.max_range, SENSOR_MARGIN);
+    const { sx, sy, facingAngle, scale } = layout;
     const fovHalf = degToRad(this.config.fov_angle / 2);
     const light = this._isLight;
     const maxRings = Math.ceil(this.config.max_range / 1000);
@@ -119,39 +123,40 @@ export class RadarCanvas {
     ctx.strokeStyle = light ? 'rgba(59,130,246,0.12)' : 'rgba(99,179,237,0.08)';
     ctx.lineWidth = 1;
 
-    // Polar rings every 1000mm
+    // Polar rings every 1000mm — drawn as semicircle centered on facingAngle
     for (let r = 1; r <= maxRings; r++) {
       const pxR = r * 1000 * scale;
       ctx.beginPath();
-      ctx.arc(sx, sy, pxR, -Math.PI, 0);
+      ctx.arc(sx, sy, pxR, facingAngle - Math.PI / 2, facingAngle + Math.PI / 2);
       ctx.stroke();
 
-      // Range label
+      // Range label — place along the facing direction
       ctx.fillStyle = light ? 'rgba(59,130,246,0.5)' : 'rgba(99,179,237,0.3)';
       ctx.font = '10px system-ui';
-      ctx.fillText(`${r}m`, sx + 4, sy - pxR + 3);
+      const labelX = sx + Math.cos(facingAngle + 0.1) * pxR;
+      const labelY = sy + Math.sin(facingAngle + 0.1) * pxR;
+      ctx.fillText(`${r}m`, labelX + 4, labelY + 3);
     }
 
-    // Radial lines every 30°
+    // Radial lines every 30° within the forward semicircle
     ctx.strokeStyle = light ? 'rgba(59,130,246,0.08)' : 'rgba(99,179,237,0.06)';
     for (let deg = -90; deg <= 90; deg += 30) {
-      const rad = degToRad(deg) - Math.PI / 2;
+      const lineAngle = facingAngle + degToRad(deg);
       // Only within FOV cone
-      if (Math.abs(rad + Math.PI / 2) > fovHalf + 0.01) continue;
+      if (Math.abs(degToRad(deg)) > fovHalf + 0.01) continue;
       const len = (this.config.max_range + 500) * scale;
       ctx.beginPath();
       ctx.moveTo(sx, sy);
-      ctx.lineTo(sx + Math.cos(rad) * len, sy + Math.sin(rad) * len);
+      ctx.lineTo(sx + Math.cos(lineAngle) * len, sy + Math.sin(lineAngle) * len);
       ctx.stroke();
     }
 
     ctx.restore();
   }
 
-  private _drawFOV(w: number, h: number): void {
+  private _drawFOV(w: number, h: number, layout: SensorLayout): void {
     const ctx = this.ctx;
-    const { x: sx, y: sy } = this._sensorPos(w, h);
-    const scale = getScale(h, this.config.max_range, SENSOR_MARGIN);
+    const { sx, sy, facingAngle, scale } = layout;
     const fovHalf = degToRad(this.config.fov_angle / 2);
     const maxR = this.config.max_range * scale;
     const light = this._isLight;
@@ -160,7 +165,7 @@ export class RadarCanvas {
     // Fill the FOV cone
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-    ctx.arc(sx, sy, maxR, -Math.PI / 2 - fovHalf, -Math.PI / 2 + fovHalf);
+    ctx.arc(sx, sy, maxR, facingAngle - fovHalf, facingAngle + fovHalf);
     ctx.closePath();
     ctx.fillStyle = light ? 'rgba(14,165,233,0.07)' : 'rgba(56,189,248,0.06)';
     ctx.fill();
@@ -172,33 +177,30 @@ export class RadarCanvas {
     ctx.beginPath();
     ctx.moveTo(sx, sy);
     ctx.lineTo(
-      sx + Math.cos(-Math.PI / 2 - fovHalf) * maxR,
-      sy + Math.sin(-Math.PI / 2 - fovHalf) * maxR
+      sx + Math.cos(facingAngle - fovHalf) * maxR,
+      sy + Math.sin(facingAngle - fovHalf) * maxR
     );
     ctx.moveTo(sx, sy);
     ctx.lineTo(
-      sx + Math.cos(-Math.PI / 2 + fovHalf) * maxR,
-      sy + Math.sin(-Math.PI / 2 + fovHalf) * maxR
+      sx + Math.cos(facingAngle + fovHalf) * maxR,
+      sy + Math.sin(facingAngle + fovHalf) * maxR
     );
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
   }
 
-  private _drawSweep(w: number, h: number): void {
+  private _drawSweep(w: number, h: number, layout: SensorLayout): void {
     const ctx = this.ctx;
-    const { x: sx, y: sy } = this._sensorPos(w, h);
-    const scale = getScale(h, this.config.max_range, SENSOR_MARGIN);
+    const { sx, sy, scale } = layout;
     const maxR = this.config.max_range * scale;
     const sweepAngle = this.sweepAngle;
     const light = this._isLight;
     const sweepRgb = light ? '59,130,246' : '99,179,237';
 
     ctx.save();
-    // Create a conic gradient-like sweep by drawing a filled arc sector
     const trailArc = Math.PI / 3; // 60° trail
 
-    // Fallback: draw multiple overlapping arcs with decreasing opacity
     const steps = 20;
     for (let i = 0; i < steps; i++) {
       const alpha = ((steps - i) / steps) * 0.25;
@@ -226,20 +228,21 @@ export class RadarCanvas {
   private _drawFurniture(
     furniture: Array<{ type: string; x: number; y: number; width: number; height: number; rotation: number; selected?: boolean }>,
     w: number,
-    h: number
+    h: number,
+    layout: SensorLayout
   ): void {
     if (furniture.length === 0) return;
     const ctx = this.ctx;
-    const scale = getScale(h, this.config.max_range, SENSOR_MARGIN);
-    const { x: sx, y: sy } = this._sensorPos(w, h);
+    const { scale } = layout;
     const light = this._isLight;
 
     ctx.save();
 
     for (const f of furniture) {
       const def = getFurnitureType(f.type);
-      const cx = sx + f.x * scale;
-      const cy = sy - f.y * scale;
+      const canvasPos = this._toCanvas(f.x, f.y, w, h);
+      const cx = canvasPos.x;
+      const cy = canvasPos.y;
       const pw = f.width * scale;
       const ph = f.height * scale;
       const rot = degToRad(f.rotation);
@@ -330,8 +333,6 @@ export class RadarCanvas {
         const radius = 3 + (i / target.trail.length) * 2;
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = target.color.replace(')', `, ${alpha})`).replace('rgb(', 'rgba(');
-        // Handle hex colors
         ctx.fillStyle = hexToRgba(target.color, alpha);
         ctx.fill();
       }
@@ -374,9 +375,9 @@ export class RadarCanvas {
     ctx.restore();
   }
 
-  private _drawSensor(w: number, h: number): void {
+  private _drawSensor(w: number, h: number, layout: SensorLayout): void {
     const ctx = this.ctx;
-    const { x: sx, y: sy } = this._sensorPos(w, h);
+    const { sx, sy, facingAngle } = layout;
     const light = this._isLight;
     const sensorColor = light ? '#0284c7' : '#38bdf8';
     ctx.save();
@@ -388,11 +389,31 @@ export class RadarCanvas {
     ctx.fill();
     ctx.shadowBlur = 0;
 
+    // Draw a small direction indicator
+    const indicatorLen = 12;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(
+      sx + Math.cos(facingAngle) * indicatorLen,
+      sy + Math.sin(facingAngle) * indicatorLen
+    );
+    ctx.strokeStyle = sensorColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Label — offset away from the facing direction (behind the sensor)
     ctx.font = '10px system-ui';
     ctx.fillStyle = light ? 'rgba(2,132,199,0.7)' : 'rgba(99,179,237,0.6)';
     ctx.textAlign = 'center';
-    ctx.fillText('SENSOR', sx, sy + 18);
+    ctx.textBaseline = 'middle';
+    const labelDist = 18;
+    ctx.fillText(
+      'SENSOR',
+      sx - Math.cos(facingAngle) * labelDist,
+      sy - Math.sin(facingAngle) * labelDist
+    );
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     ctx.restore();
   }
 

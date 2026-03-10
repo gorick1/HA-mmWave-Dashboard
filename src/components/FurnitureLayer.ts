@@ -1,5 +1,5 @@
 import type { FurnitureConfig, FurnitureState, Point, CardConfig } from '../types/index.js';
-import { canvasToMm, mmToCanvas, getScale, degToRad, snapToGrid, distance } from '../utils/geometry.js';
+import { canvasToMm, mmToCanvas, getSensorLayout, degToRad, snapToGrid, distance } from '../utils/geometry.js';
 import { getFurnitureType } from '../utils/furniture-shapes.js';
 
 const HANDLE_SIZE = 8;
@@ -47,6 +47,10 @@ export class FurnitureLayer {
     this.snapToGridEnabled = enabled;
   }
 
+  private get _sensorPosition() {
+    return this.config.sensor_position ?? 'bottom';
+  }
+
   /**
    * Place a new furniture item at the given canvas position.
    */
@@ -59,7 +63,7 @@ export class FurnitureLayer {
   ): FurnitureConfig | null {
     const def = getFurnitureType(furnitureType);
     if (!def) return null;
-    let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+    let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
     if (this.snapToGridEnabled) {
       mm = {
         x: snapToGrid(mm.x, SNAP_GRID_MM),
@@ -91,7 +95,8 @@ export class FurnitureLayer {
     canvasWidth: number,
     canvasHeight: number
   ): boolean {
-    const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN);
+    const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN, this.config.max_range);
+    const scale = layout.scale;
 
     // Check if clicking a handle of the selected item
     if (this.selectedId) {
@@ -139,7 +144,7 @@ export class FurnitureLayer {
         for (const i of this.items) i.selected = false;
         item.selected = true;
         this.selectedId = item.id;
-        const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+        const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
         this.dragOffset = { x: mm.x - item.x, y: mm.y - item.y };
         this.dragging = true;
         return true;
@@ -163,7 +168,7 @@ export class FurnitureLayer {
     if (!item) return;
 
     if (this.dragging) {
-      let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+      let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
       if (this.snapToGridEnabled) {
         mm = {
           x: snapToGrid(mm.x - this.dragOffset.x, SNAP_GRID_MM) + this.dragOffset.x,
@@ -173,7 +178,7 @@ export class FurnitureLayer {
       item.x = mm.x - this.dragOffset.x;
       item.y = mm.y - this.dragOffset.y;
     } else if (this.resizing && this.resizeHandleIndex >= 0 && this.resizeHandleIndex < 4) {
-      const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+      const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
       // Resize from anchor corner: the anchor corner stays fixed, the dragged corner follows the mouse.
       // Transform the mouse-to-anchor vector into the item's local (unrotated) frame.
       const rot = degToRad(item.rotation);
@@ -188,12 +193,14 @@ export class FurnitureLayer {
       item.y = (this.resizeAnchorMm.y + mm.y) / 2;
     } else if (this.resizeHandleIndex === 4) {
       // Rotation
-      const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-      const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN);
-      const cx = sc.x + item.x * scale;
-      const cy = sc.y - item.y * scale;
+      const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN, this.config.max_range);
+      const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
+      const cx = itemCanvas.x;
+      const cy = itemCanvas.y;
       const angle = Math.atan2(canvasY - cy, canvasX - cx);
-      item.rotation = (angle * 180) / Math.PI + 90;
+      // Adjust rotation to account for sensor facing direction
+      // The visual rotation needs to be offset by the facing angle
+      item.rotation = (angle * 180) / Math.PI + 90 - (layout.facingAngle * 180) / Math.PI - 90;
     }
   }
 
@@ -219,7 +226,8 @@ export class FurnitureLayer {
     if (!this.selectedId) return;
     const item = this.items.find(i => i.id === this.selectedId);
     if (!item) return;
-    const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN);
+    const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN, this.config.max_range);
+    const scale = layout.scale;
     const handles = this._getHandles(item, canvasWidth, canvasHeight, scale);
 
     ctx.save();
@@ -228,9 +236,9 @@ export class FurnitureLayer {
     ctx.lineWidth = 1.5;
 
     // Bounding box
-    const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-    const cx = sc.x + item.x * scale;
-    const cy = sc.y - item.y * scale;
+    const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
+    const cx = itemCanvas.x;
+    const cy = itemCanvas.y;
     const pw = item.width * scale;
     const ph = item.height * scale;
     const rot = degToRad(item.rotation);
@@ -261,19 +269,15 @@ export class FurnitureLayer {
     ctx.restore();
   }
 
-  private _sensorPosCanvas(cw: number, ch: number): Point {
-    return { x: cw / 2, y: ch - SENSOR_MARGIN };
-  }
-
   private _getHandles(
     item: FurnitureState,
     canvasWidth: number,
     canvasHeight: number,
     scale: number
   ): Point[] {
-    const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-    const cx = sc.x + item.x * scale;
-    const cy = sc.y - item.y * scale;
+    const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
+    const cx = itemCanvas.x;
+    const cy = itemCanvas.y;
     const pw = item.width * scale / 2;
     const ph = item.height * scale / 2;
     const rot = degToRad(item.rotation);
@@ -303,9 +307,9 @@ export class FurnitureLayer {
     canvasHeight: number,
     scale: number
   ): boolean {
-    const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-    const cx = sc.x + item.x * scale;
-    const cy = sc.y - item.y * scale;
+    const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
+    const cx = itemCanvas.x;
+    const cy = itemCanvas.y;
     // Transform click into item's local space
     const rot = degToRad(-item.rotation);
     const dx = canvasX - cx;
@@ -322,15 +326,16 @@ export class FurnitureLayer {
    * Draw all furniture items using their type-specific draw function.
    */
   drawAll(ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number): void {
-    const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN);
-    const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
+    const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN, this.config.max_range);
+    const scale = layout.scale;
 
     ctx.save();
     for (const item of this.items) {
       const def = getFurnitureType(item.type);
       if (!def) continue;
-      const cx = sc.x + item.x * scale;
-      const cy = sc.y - item.y * scale;
+      const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
+      const cx = itemCanvas.x;
+      const cy = itemCanvas.y;
       const pw = item.width * scale;
       const ph = item.height * scale;
       const rot = degToRad(item.rotation);

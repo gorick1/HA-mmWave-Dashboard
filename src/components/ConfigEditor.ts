@@ -1,5 +1,16 @@
-import type { CardConfig, ZoneConfig } from '../types/index.js';
+import type { CardConfig, ZoneConfig, SensorPosition } from '../types/index.js';
 import { FURNITURE_TYPES } from '../utils/furniture-shapes.js';
+
+const POSITION_LABELS: Record<SensorPosition, string> = {
+  'bottom': 'Bottom Wall',
+  'top': 'Top Wall',
+  'left': 'Left Wall',
+  'right': 'Right Wall',
+  'bottom-left': 'Bottom-Left Corner',
+  'bottom-right': 'Bottom-Right Corner',
+  'top-left': 'Top-Left Corner',
+  'top-right': 'Top-Right Corner',
+};
 
 /**
  * Generate HA template sensor YAML for all zones.
@@ -89,7 +100,22 @@ export class ConfigEditor {
   renderHTML(): string {
     const c = this.config;
     const isLight = c.color_scheme === 'light';
+    const currentPos = c.sensor_position ?? 'bottom';
+    const posOptions = Object.entries(POSITION_LABELS)
+      .map(([value, label]) => `<option value="${value}" ${currentPos === value ? 'selected' : ''}>${label}</option>`)
+      .join('');
+
     return `
+      <div class="setting-group">
+        <div class="setting-label">Sensor Position</div>
+        <div class="setting-row">
+          <label for="cfg-sensor-pos">Mounting Wall</label>
+          <select id="cfg-sensor-pos" aria-label="Sensor mounting position">
+            ${posOptions}
+          </select>
+        </div>
+      </div>
+
       <div class="setting-group">
         <div class="setting-label">Detection</div>
         <div class="setting-row">
@@ -151,6 +177,7 @@ export class ConfigEditor {
   attachListeners(container: Element): void {
     const get = (id: string) => container.querySelector(`#${id}`);
 
+    const sensorPos = get('cfg-sensor-pos') as HTMLSelectElement | null;
     const rangeMax = get('cfg-max-range') as HTMLInputElement | null;
     const rangeFov = get('cfg-fov') as HTMLInputElement | null;
     const checkGrid = get('cfg-grid') as HTMLInputElement | null;
@@ -158,6 +185,10 @@ export class ConfigEditor {
     const checkTrails = get('cfg-trails') as HTMLInputElement | null;
     const rangeTrail = get('cfg-trail-len') as HTMLInputElement | null;
     const checkLightMode = get('cfg-light-mode') as HTMLInputElement | null;
+
+    sensorPos?.addEventListener('change', () => {
+      this.onConfigChange({ sensor_position: sensorPos.value as SensorPosition });
+    });
 
     rangeMax?.addEventListener('input', () => {
       const val = parseInt(rangeMax.value);

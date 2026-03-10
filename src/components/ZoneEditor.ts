@@ -2,7 +2,6 @@ import type { ZoneConfig, ZoneState, Point, CardConfig } from '../types/index.js
 import {
   canvasToMm,
   mmToCanvas,
-  getScale,
   pointInPolygon,
   polygonCentroid,
   distance,
@@ -32,6 +31,10 @@ export class ZoneEditor {
   constructor(config: CardConfig) {
     this.config = config;
     this.zones = config.zones.map(z => ({ ...z, occupied: false, selectedVertexIndex: null, dragging: false }));
+  }
+
+  private get _sensorPosition() {
+    return this.config.sensor_position ?? 'bottom';
   }
 
   updateConfig(config: CardConfig): void {
@@ -89,7 +92,7 @@ export class ZoneEditor {
     canvasWidth: number,
     canvasHeight: number
   ): boolean {
-    const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+    const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
 
     if (this.drawingVertices.length >= 3) {
       // Check if clicking near the first vertex to close
@@ -99,7 +102,8 @@ export class ZoneEditor {
         canvasWidth,
         canvasHeight,
         this.config.max_range,
-        SENSOR_MARGIN
+        SENSOR_MARGIN,
+        this._sensorPosition
       );
       if (distance({ x: canvasX, y: canvasY }, firstPx) < VERTEX_RADIUS + 4) {
         this._closePolygon();
@@ -180,7 +184,8 @@ export class ZoneEditor {
             canvasWidth,
             canvasHeight,
             this.config.max_range,
-            SENSOR_MARGIN
+            SENSOR_MARGIN,
+            this._sensorPosition
           );
           if (distance({ x: canvasX, y: canvasY }, vPx) < VERTEX_RADIUS + 4) {
             this.draggingVertex = true;
@@ -195,7 +200,7 @@ export class ZoneEditor {
     for (let idx = this.zones.length - 1; idx >= 0; idx--) {
       const zone = this.zones[idx];
       if (zone.vertices.length < 3) continue;
-      const mmPos = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+      const mmPos = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
       if (pointInPolygon(mmPos, zone.vertices)) {
         this.selectedZoneId = zone.id;
         const centroid = polygonCentroid(zone.vertices);
@@ -221,7 +226,7 @@ export class ZoneEditor {
     if (!this.selectedZoneId) return;
     const zone = this.zones.find(z => z.id === this.selectedZoneId);
     if (!zone) return;
-    const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+    const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
 
     if (this.draggingVertex && this.dragVertexIndex >= 0) {
       zone.vertices[this.dragVertexIndex] = mm;
@@ -251,13 +256,13 @@ export class ZoneEditor {
   ): void {
     for (const zone of this.zones) {
       const pts = zone.vertices.map(v =>
-        mmToCanvas(v.x, v.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN)
+        mmToCanvas(v.x, v.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition)
       );
       for (let i = 0; i < pts.length; i++) {
         const next = (i + 1) % pts.length;
         const { t, dist } = closestPointOnSegment({ x: canvasX, y: canvasY }, pts[i], pts[next]);
         if (dist < EDGE_HIT_RADIUS && t > 0.05 && t < 0.95) {
-          const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN);
+          const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN, this._sensorPosition);
           zone.vertices.splice(next, 0, mm);
           return;
         }
@@ -290,7 +295,8 @@ export class ZoneEditor {
       canvasWidth,
       canvasHeight,
       this.config.max_range,
-      SENSOR_MARGIN
+      SENSOR_MARGIN,
+      this._sensorPosition
     );
     return distance({ x: canvasX, y: canvasY }, firstPx) < VERTEX_RADIUS + 4;
   }
