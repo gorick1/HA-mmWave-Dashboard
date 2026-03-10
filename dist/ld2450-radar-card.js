@@ -25,39 +25,101 @@ function distance(a, b) {
     return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
 /**
- * Convert radar millimeter coordinates to canvas pixel coordinates.
- * The sensor sits at the bottom-center of the canvas.
- * X: negative = left, positive = right
- * Y: 0 at sensor, increases away (up on screen)
+ * Compute the sensor layout for a given position, canvas dimensions, and range.
+ *
+ * The sensor's local coordinate system:
+ *   Y+ = forward (away from sensor)
+ *   X+ = to the right of the sensor
+ *
+ * Returns pixel position, direction vectors, scale, and facing angle.
  */
-function mmToCanvas(mmX, mmY, canvasWidth, canvasHeight, maxRangeMm, sensorMargin = 40) {
-    const sensorX = canvasWidth / 2;
-    const sensorY = canvasHeight - sensorMargin;
-    const usableHeight = canvasHeight - sensorMargin;
-    const scale = usableHeight / maxRangeMm;
+function getSensorLayout(position, canvasWidth, canvasHeight, sensorMargin, maxRangeMm) {
+    let sx, sy, facingAngle, usable;
+    switch (position) {
+        case 'top':
+            sx = canvasWidth / 2;
+            sy = sensorMargin;
+            facingAngle = Math.PI / 2; // down
+            usable = canvasHeight - sensorMargin;
+            break;
+        case 'left':
+            sx = sensorMargin;
+            sy = canvasHeight / 2;
+            facingAngle = 0; // right
+            usable = canvasWidth - sensorMargin;
+            break;
+        case 'right':
+            sx = canvasWidth - sensorMargin;
+            sy = canvasHeight / 2;
+            facingAngle = Math.PI; // left
+            usable = canvasWidth - sensorMargin;
+            break;
+        case 'bottom-left':
+            sx = sensorMargin;
+            sy = canvasHeight - sensorMargin;
+            facingAngle = -Math.PI / 4; // up-right 45°
+            usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+            break;
+        case 'bottom-right':
+            sx = canvasWidth - sensorMargin;
+            sy = canvasHeight - sensorMargin;
+            facingAngle = -3 * Math.PI / 4; // up-left 45°
+            usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+            break;
+        case 'top-left':
+            sx = sensorMargin;
+            sy = sensorMargin;
+            facingAngle = Math.PI / 4; // down-right 45°
+            usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+            break;
+        case 'top-right':
+            sx = canvasWidth - sensorMargin;
+            sy = sensorMargin;
+            facingAngle = 3 * Math.PI / 4; // down-left 45°
+            usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+            break;
+        case 'bottom':
+        default:
+            sx = canvasWidth / 2;
+            sy = canvasHeight - sensorMargin;
+            facingAngle = -Math.PI / 2; // up
+            usable = canvasHeight - sensorMargin;
+            break;
+    }
+    const scale = usable / maxRangeMm;
+    // Forward direction (where sensor Y+ maps to on canvas)
+    const forwardX = Math.cos(facingAngle);
+    const forwardY = Math.sin(facingAngle);
+    // Right direction (where sensor X+ maps to on canvas) — perpendicular clockwise
+    const rightX = -Math.sin(facingAngle);
+    const rightY = Math.cos(facingAngle);
+    return { sx, sy, forwardX, forwardY, rightX, rightY, scale, facingAngle };
+}
+/**
+ * Convert radar millimeter coordinates to canvas pixel coordinates.
+ * The sensor position on the canvas depends on the sensor_position config.
+ * X: to the right of the sensor in its local frame
+ * Y: away from the sensor (forward) in its local frame
+ */
+function mmToCanvas(mmX, mmY, canvasWidth, canvasHeight, maxRangeMm, sensorMargin = 40, sensorPosition = 'bottom') {
+    const layout = getSensorLayout(sensorPosition, canvasWidth, canvasHeight, sensorMargin, maxRangeMm);
     return {
-        x: sensorX + mmX * scale,
-        y: sensorY - mmY * scale,
+        x: layout.sx + (mmX * layout.rightX + mmY * layout.forwardX) * layout.scale,
+        y: layout.sy + (mmX * layout.rightY + mmY * layout.forwardY) * layout.scale,
     };
 }
 /**
  * Convert canvas pixel coordinates back to radar mm coordinates.
  */
-function canvasToMm(px, py, canvasWidth, canvasHeight, maxRangeMm, sensorMargin = 40) {
-    const sensorX = canvasWidth / 2;
-    const sensorY = canvasHeight - sensorMargin;
-    const usableHeight = canvasHeight - sensorMargin;
-    const scale = usableHeight / maxRangeMm;
+function canvasToMm(px, py, canvasWidth, canvasHeight, maxRangeMm, sensorMargin = 40, sensorPosition = 'bottom') {
+    const layout = getSensorLayout(sensorPosition, canvasWidth, canvasHeight, sensorMargin, maxRangeMm);
+    const dx = (px - layout.sx) / layout.scale;
+    const dy = (py - layout.sy) / layout.scale;
+    // Inverse of the orthogonal rotation matrix (transpose)
     return {
-        x: (px - sensorX) / scale,
-        y: (sensorY - py) / scale,
+        x: dx * layout.rightX + dy * layout.rightY,
+        y: dx * layout.forwardX + dy * layout.forwardY,
     };
-}
-/**
- * Get scale factor (pixels per mm) for current canvas size.
- */
-function getScale(canvasHeight, maxRangeMm, sensorMargin = 40) {
-    return (canvasHeight - sensorMargin) / maxRangeMm;
 }
 /**
  * Compute the centroid of a polygon.
@@ -515,71 +577,74 @@ class RadarCanvas {
         const w = canvas.width;
         const h = canvas.height;
         ctx.clearRect(0, 0, w, h);
+        const layout = this._getLayout(w, h);
         if (config.show_grid)
-            this._drawGrid(w, h);
-        this._drawFOV(w, h);
+            this._drawGrid(w, h, layout);
+        this._drawFOV(w, h, layout);
         if (config.show_sweep)
-            this._drawSweep(w, h);
-        this._drawFurniture(furniture, w, h);
+            this._drawSweep(w, h, layout);
+        this._drawFurniture(furniture, w, h, layout);
         this._drawZones(zones, targets, w, h);
         if (config.show_trails)
             this._drawTrails(targets, w, h);
         this._drawTargets(targets, w, h);
-        this._drawSensor(w, h);
+        this._drawSensor(w, h, layout);
         this._drawDrawingOverlay(drawingState, w, h);
         if (hoveredPos) {
             this._drawTooltip(hoveredPos, w, h);
         }
     }
-    _sensorPos(w, h) {
-        return { x: w / 2, y: h - SENSOR_MARGIN$3 };
+    _getLayout(w, h) {
+        var _a;
+        return getSensorLayout((_a = this.config.sensor_position) !== null && _a !== void 0 ? _a : 'bottom', w, h, SENSOR_MARGIN$3, this.config.max_range);
     }
     _toCanvas(mmX, mmY, w, h) {
-        return mmToCanvas(mmX, mmY, w, h, this.config.max_range, SENSOR_MARGIN$3);
+        var _a;
+        return mmToCanvas(mmX, mmY, w, h, this.config.max_range, SENSOR_MARGIN$3, (_a = this.config.sensor_position) !== null && _a !== void 0 ? _a : 'bottom');
     }
     get _isLight() {
         return this.config.color_scheme === 'light';
     }
-    _drawGrid(w, h) {
+    _drawGrid(w, h, layout) {
         const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
+        const { sx, sy, facingAngle, scale } = layout;
         const fovHalf = degToRad(this.config.fov_angle / 2);
         const light = this._isLight;
         const maxRings = Math.ceil(this.config.max_range / 1000);
         ctx.save();
         ctx.strokeStyle = light ? 'rgba(59,130,246,0.12)' : 'rgba(99,179,237,0.08)';
         ctx.lineWidth = 1;
-        // Polar rings every 1000mm
+        // Polar rings every 1000mm — drawn as semicircle centered on facingAngle
         for (let r = 1; r <= maxRings; r++) {
             const pxR = r * 1000 * scale;
             ctx.beginPath();
-            ctx.arc(sx, sy, pxR, -Math.PI, 0);
+            ctx.arc(sx, sy, pxR, facingAngle - Math.PI / 2, facingAngle + Math.PI / 2);
             ctx.stroke();
-            // Range label
+            // Range label — place along the facing direction
             ctx.fillStyle = light ? 'rgba(59,130,246,0.5)' : 'rgba(99,179,237,0.3)';
             ctx.font = '10px system-ui';
-            ctx.fillText(`${r}m`, sx + 4, sy - pxR + 3);
+            const labelX = sx + Math.cos(facingAngle + 0.1) * pxR;
+            const labelY = sy + Math.sin(facingAngle + 0.1) * pxR;
+            ctx.fillText(`${r}m`, labelX + 4, labelY + 3);
         }
-        // Radial lines every 30°
+        // Radial lines every 30° within the forward semicircle
         ctx.strokeStyle = light ? 'rgba(59,130,246,0.08)' : 'rgba(99,179,237,0.06)';
         for (let deg = -90; deg <= 90; deg += 30) {
-            const rad = degToRad(deg) - Math.PI / 2;
+            const lineAngle = facingAngle + degToRad(deg);
             // Only within FOV cone
-            if (Math.abs(rad + Math.PI / 2) > fovHalf + 0.01)
+            if (Math.abs(degToRad(deg)) > fovHalf + 0.01)
                 continue;
             const len = (this.config.max_range + 500) * scale;
             ctx.beginPath();
             ctx.moveTo(sx, sy);
-            ctx.lineTo(sx + Math.cos(rad) * len, sy + Math.sin(rad) * len);
+            ctx.lineTo(sx + Math.cos(lineAngle) * len, sy + Math.sin(lineAngle) * len);
             ctx.stroke();
         }
         ctx.restore();
     }
-    _drawFOV(w, h) {
+    _drawFOV(w, h, layout) {
         const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
+        const { sx, sy, facingAngle, scale } = layout;
         const fovHalf = degToRad(this.config.fov_angle / 2);
         const maxR = this.config.max_range * scale;
         const light = this._isLight;
@@ -587,7 +652,7 @@ class RadarCanvas {
         // Fill the FOV cone
         ctx.beginPath();
         ctx.moveTo(sx, sy);
-        ctx.arc(sx, sy, maxR, -Math.PI / 2 - fovHalf, -Math.PI / 2 + fovHalf);
+        ctx.arc(sx, sy, maxR, facingAngle - fovHalf, facingAngle + fovHalf);
         ctx.closePath();
         ctx.fillStyle = light ? 'rgba(14,165,233,0.07)' : 'rgba(56,189,248,0.06)';
         ctx.fill();
@@ -597,25 +662,22 @@ class RadarCanvas {
         ctx.setLineDash([6, 4]);
         ctx.beginPath();
         ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + Math.cos(-Math.PI / 2 - fovHalf) * maxR, sy + Math.sin(-Math.PI / 2 - fovHalf) * maxR);
+        ctx.lineTo(sx + Math.cos(facingAngle - fovHalf) * maxR, sy + Math.sin(facingAngle - fovHalf) * maxR);
         ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + Math.cos(-Math.PI / 2 + fovHalf) * maxR, sy + Math.sin(-Math.PI / 2 + fovHalf) * maxR);
+        ctx.lineTo(sx + Math.cos(facingAngle + fovHalf) * maxR, sy + Math.sin(facingAngle + fovHalf) * maxR);
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
     }
-    _drawSweep(w, h) {
+    _drawSweep(w, h, layout) {
         const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
+        const { sx, sy, scale } = layout;
         const maxR = this.config.max_range * scale;
         const sweepAngle = this.sweepAngle;
         const light = this._isLight;
         const sweepRgb = light ? '59,130,246' : '99,179,237';
         ctx.save();
-        // Create a conic gradient-like sweep by drawing a filled arc sector
         const trailArc = Math.PI / 3; // 60° trail
-        // Fallback: draw multiple overlapping arcs with decreasing opacity
         const steps = 20;
         for (let i = 0; i < steps; i++) {
             const alpha = ((steps - i) / steps) * 0.25;
@@ -637,18 +699,18 @@ class RadarCanvas {
         ctx.stroke();
         ctx.restore();
     }
-    _drawFurniture(furniture, w, h) {
+    _drawFurniture(furniture, w, h, layout) {
         if (furniture.length === 0)
             return;
         const ctx = this.ctx;
-        const scale = getScale(h, this.config.max_range, SENSOR_MARGIN$3);
-        const { x: sx, y: sy } = this._sensorPos(w, h);
+        const { scale } = layout;
         const light = this._isLight;
         ctx.save();
         for (const f of furniture) {
             const def = getFurnitureType(f.type);
-            const cx = sx + f.x * scale;
-            const cy = sy - f.y * scale;
+            const canvasPos = this._toCanvas(f.x, f.y, w, h);
+            const cx = canvasPos.x;
+            const cy = canvasPos.y;
             const pw = f.width * scale;
             const ph = f.height * scale;
             const rot = degToRad(f.rotation);
@@ -730,8 +792,6 @@ class RadarCanvas {
                 const radius = 3 + (i / target.trail.length) * 2;
                 ctx.beginPath();
                 ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-                ctx.fillStyle = target.color.replace(')', `, ${alpha})`).replace('rgb(', 'rgba(');
-                // Handle hex colors
                 ctx.fillStyle = hexToRgba(target.color, alpha);
                 ctx.fill();
             }
@@ -768,9 +828,9 @@ class RadarCanvas {
         }
         ctx.restore();
     }
-    _drawSensor(w, h) {
+    _drawSensor(w, h, layout) {
         const ctx = this.ctx;
-        const { x: sx, y: sy } = this._sensorPos(w, h);
+        const { sx, sy, facingAngle } = layout;
         const light = this._isLight;
         const sensorColor = light ? '#0284c7' : '#38bdf8';
         ctx.save();
@@ -781,11 +841,23 @@ class RadarCanvas {
         ctx.fillStyle = sensorColor;
         ctx.fill();
         ctx.shadowBlur = 0;
+        // Draw a small direction indicator
+        const indicatorLen = 12;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + Math.cos(facingAngle) * indicatorLen, sy + Math.sin(facingAngle) * indicatorLen);
+        ctx.strokeStyle = sensorColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Label — offset away from the facing direction (behind the sensor)
         ctx.font = '10px system-ui';
         ctx.fillStyle = light ? 'rgba(2,132,199,0.7)' : 'rgba(99,179,237,0.6)';
         ctx.textAlign = 'center';
-        ctx.fillText('SENSOR', sx, sy + 18);
+        ctx.textBaseline = 'middle';
+        const labelDist = 18;
+        ctx.fillText('SENSOR', sx - Math.cos(facingAngle) * labelDist, sy - Math.sin(facingAngle) * labelDist);
         ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
         ctx.restore();
     }
     _drawDrawingOverlay(state, w, h) {
@@ -1001,6 +1073,10 @@ class FurnitureLayer {
     setSnapToGrid(enabled) {
         this.snapToGridEnabled = enabled;
     }
+    get _sensorPosition() {
+        var _a;
+        return (_a = this.config.sensor_position) !== null && _a !== void 0 ? _a : 'bottom';
+    }
     /**
      * Place a new furniture item at the given canvas position.
      */
@@ -1008,7 +1084,7 @@ class FurnitureLayer {
         const def = getFurnitureType(furnitureType);
         if (!def)
             return null;
-        let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
+        let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
         if (this.snapToGridEnabled) {
             mm = {
                 x: snapToGrid(mm.x, SNAP_GRID_MM),
@@ -1034,7 +1110,8 @@ class FurnitureLayer {
      * Returns true if the event was consumed.
      */
     onMouseDown(canvasX, canvasY, canvasWidth, canvasHeight) {
-        const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
+        const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN$2, this.config.max_range);
+        const scale = layout.scale;
         // Check if clicking a handle of the selected item
         if (this.selectedId) {
             const item = this.items.find(i => i.id === this.selectedId);
@@ -1082,7 +1159,7 @@ class FurnitureLayer {
                     i.selected = false;
                 item.selected = true;
                 this.selectedId = item.id;
-                const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
+                const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
                 this.dragOffset = { x: mm.x - item.x, y: mm.y - item.y };
                 this.dragging = true;
                 return true;
@@ -1101,7 +1178,7 @@ class FurnitureLayer {
         if (!item)
             return;
         if (this.dragging) {
-            let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
+            let mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
             if (this.snapToGridEnabled) {
                 mm = {
                     x: snapToGrid(mm.x - this.dragOffset.x, SNAP_GRID_MM) + this.dragOffset.x,
@@ -1112,7 +1189,7 @@ class FurnitureLayer {
             item.y = mm.y - this.dragOffset.y;
         }
         else if (this.resizing && this.resizeHandleIndex >= 0 && this.resizeHandleIndex < 4) {
-            const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
+            const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
             // Resize from anchor corner: the anchor corner stays fixed, the dragged corner follows the mouse.
             // Transform the mouse-to-anchor vector into the item's local (unrotated) frame.
             const rot = degToRad(item.rotation);
@@ -1128,12 +1205,13 @@ class FurnitureLayer {
         }
         else if (this.resizeHandleIndex === 4) {
             // Rotation
-            const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-            const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
-            const cx = sc.x + item.x * scale;
-            const cy = sc.y - item.y * scale;
+            const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN$2, this.config.max_range);
+            const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
+            const cx = itemCanvas.x;
+            const cy = itemCanvas.y;
             const angle = Math.atan2(canvasY - cy, canvasX - cx);
-            item.rotation = (angle * 180) / Math.PI + 90;
+            // Adjust rotation to account for sensor facing direction
+            item.rotation = ((angle - layout.facingAngle) * 180) / Math.PI;
         }
     }
     onMouseUp() {
@@ -1160,16 +1238,17 @@ class FurnitureLayer {
         const item = this.items.find(i => i.id === this.selectedId);
         if (!item)
             return;
-        const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
+        const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN$2, this.config.max_range);
+        const scale = layout.scale;
         const handles = this._getHandles(item, canvasWidth, canvasHeight, scale);
         ctx.save();
         ctx.strokeStyle = 'rgba(56,189,248,0.8)';
         ctx.fillStyle = 'rgba(56,189,248,0.3)';
         ctx.lineWidth = 1.5;
         // Bounding box
-        const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-        const cx = sc.x + item.x * scale;
-        const cy = sc.y - item.y * scale;
+        const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
+        const cx = itemCanvas.x;
+        const cy = itemCanvas.y;
         const pw = item.width * scale;
         const ph = item.height * scale;
         const rot = degToRad(item.rotation);
@@ -1196,13 +1275,10 @@ class FurnitureLayer {
         ctx.stroke();
         ctx.restore();
     }
-    _sensorPosCanvas(cw, ch) {
-        return { x: cw / 2, y: ch - SENSOR_MARGIN$2 };
-    }
     _getHandles(item, canvasWidth, canvasHeight, scale) {
-        const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-        const cx = sc.x + item.x * scale;
-        const cy = sc.y - item.y * scale;
+        const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
+        const cx = itemCanvas.x;
+        const cy = itemCanvas.y;
         const pw = item.width * scale / 2;
         const ph = item.height * scale / 2;
         const rot = degToRad(item.rotation);
@@ -1224,9 +1300,9 @@ class FurnitureLayer {
         return [...rotated, rotHandle];
     }
     _hitTest(item, canvasX, canvasY, canvasWidth, canvasHeight, scale) {
-        const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
-        const cx = sc.x + item.x * scale;
-        const cy = sc.y - item.y * scale;
+        const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
+        const cx = itemCanvas.x;
+        const cy = itemCanvas.y;
         // Transform click into item's local space
         const rot = degToRad(-item.rotation);
         const dx = canvasX - cx;
@@ -1240,15 +1316,16 @@ class FurnitureLayer {
      * Draw all furniture items using their type-specific draw function.
      */
     drawAll(ctx, canvasWidth, canvasHeight) {
-        const scale = getScale(canvasHeight, this.config.max_range, SENSOR_MARGIN$2);
-        const sc = this._sensorPosCanvas(canvasWidth, canvasHeight);
+        const layout = getSensorLayout(this._sensorPosition, canvasWidth, canvasHeight, SENSOR_MARGIN$2, this.config.max_range);
+        const scale = layout.scale;
         ctx.save();
         for (const item of this.items) {
             const def = getFurnitureType(item.type);
             if (!def)
                 continue;
-            const cx = sc.x + item.x * scale;
-            const cy = sc.y - item.y * scale;
+            const itemCanvas = mmToCanvas(item.x, item.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$2, this._sensorPosition);
+            const cx = itemCanvas.x;
+            const cy = itemCanvas.y;
             const pw = item.width * scale;
             const ph = item.height * scale;
             const rot = degToRad(item.rotation);
@@ -1288,6 +1365,10 @@ class ZoneEditor {
         this.onZoneComplete = null;
         this.config = config;
         this.zones = config.zones.map(z => ({ ...z, occupied: false, selectedVertexIndex: null, dragging: false }));
+    }
+    get _sensorPosition() {
+        var _a;
+        return (_a = this.config.sensor_position) !== null && _a !== void 0 ? _a : 'bottom';
     }
     updateConfig(config) {
         this.config = config;
@@ -1332,10 +1413,10 @@ class ZoneEditor {
      * Returns true if the polygon was closed.
      */
     handleDrawClick(canvasX, canvasY, canvasWidth, canvasHeight) {
-        const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1);
+        const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition);
         if (this.drawingVertices.length >= 3) {
             // Check if clicking near the first vertex to close
-            const firstPx = mmToCanvas(this.drawingVertices[0].x, this.drawingVertices[0].y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1);
+            const firstPx = mmToCanvas(this.drawingVertices[0].x, this.drawingVertices[0].y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition);
             if (distance({ x: canvasX, y: canvasY }, firstPx) < VERTEX_RADIUS + 4) {
                 this._closePolygon();
                 return true;
@@ -1400,7 +1481,7 @@ class ZoneEditor {
             const zone = this.zones.find(z => z.id === this.selectedZoneId);
             if (zone) {
                 for (let i = 0; i < zone.vertices.length; i++) {
-                    const vPx = mmToCanvas(zone.vertices[i].x, zone.vertices[i].y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1);
+                    const vPx = mmToCanvas(zone.vertices[i].x, zone.vertices[i].y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition);
                     if (distance({ x: canvasX, y: canvasY }, vPx) < VERTEX_RADIUS + 4) {
                         this.draggingVertex = true;
                         this.dragVertexIndex = i;
@@ -1414,7 +1495,7 @@ class ZoneEditor {
             const zone = this.zones[idx];
             if (zone.vertices.length < 3)
                 continue;
-            const mmPos = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1);
+            const mmPos = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition);
             if (pointInPolygon(mmPos, zone.vertices)) {
                 this.selectedZoneId = zone.id;
                 const centroid = polygonCentroid(zone.vertices);
@@ -1435,7 +1516,7 @@ class ZoneEditor {
         const zone = this.zones.find(z => z.id === this.selectedZoneId);
         if (!zone)
             return;
-        const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1);
+        const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition);
         if (this.draggingVertex && this.dragVertexIndex >= 0) {
             zone.vertices[this.dragVertexIndex] = mm;
         }
@@ -1457,12 +1538,12 @@ class ZoneEditor {
      */
     onDoubleClick(canvasX, canvasY, canvasWidth, canvasHeight) {
         for (const zone of this.zones) {
-            const pts = zone.vertices.map(v => mmToCanvas(v.x, v.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1));
+            const pts = zone.vertices.map(v => mmToCanvas(v.x, v.y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition));
             for (let i = 0; i < pts.length; i++) {
                 const next = (i + 1) % pts.length;
                 const { t, dist } = closestPointOnSegment({ x: canvasX, y: canvasY }, pts[i], pts[next]);
                 if (dist < EDGE_HIT_RADIUS && t > 0.05 && t < 0.95) {
-                    const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1);
+                    const mm = canvasToMm(canvasX, canvasY, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition);
                     zone.vertices.splice(next, 0, mm);
                     return;
                 }
@@ -1483,11 +1564,21 @@ class ZoneEditor {
     isNearFirstVertex(canvasX, canvasY, canvasWidth, canvasHeight) {
         if (this.drawingVertices.length < 3)
             return false;
-        const firstPx = mmToCanvas(this.drawingVertices[0].x, this.drawingVertices[0].y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1);
+        const firstPx = mmToCanvas(this.drawingVertices[0].x, this.drawingVertices[0].y, canvasWidth, canvasHeight, this.config.max_range, SENSOR_MARGIN$1, this._sensorPosition);
         return distance({ x: canvasX, y: canvasY }, firstPx) < VERTEX_RADIUS + 4;
     }
 }
 
+const POSITION_LABELS = {
+    'bottom': 'Bottom Wall',
+    'top': 'Top Wall',
+    'left': 'Left Wall',
+    'right': 'Right Wall',
+    'bottom-left': 'Bottom-Left Corner',
+    'bottom-right': 'Bottom-Right Corner',
+    'top-left': 'Top-Left Corner',
+    'top-right': 'Top-Right Corner',
+};
 /**
  * Generate HA template sensor YAML for all zones.
  */
@@ -1561,9 +1652,24 @@ class ConfigEditor {
      * Render the settings panel as an HTML string.
      */
     renderHTML() {
+        var _a;
         const c = this.config;
         const isLight = c.color_scheme === 'light';
+        const currentPos = (_a = c.sensor_position) !== null && _a !== void 0 ? _a : 'bottom';
+        const posOptions = Object.entries(POSITION_LABELS)
+            .map(([value, label]) => `<option value="${value}" ${currentPos === value ? 'selected' : ''}>${label}</option>`)
+            .join('');
         return `
+      <div class="setting-group">
+        <div class="setting-label">Sensor Position</div>
+        <div class="setting-row">
+          <label for="cfg-sensor-pos">Mounting Wall</label>
+          <select id="cfg-sensor-pos" aria-label="Sensor mounting position">
+            ${posOptions}
+          </select>
+        </div>
+      </div>
+
       <div class="setting-group">
         <div class="setting-label">Detection</div>
         <div class="setting-row">
@@ -1623,6 +1729,7 @@ class ConfigEditor {
      */
     attachListeners(container) {
         const get = (id) => container.querySelector(`#${id}`);
+        const sensorPos = get('cfg-sensor-pos');
         const rangeMax = get('cfg-max-range');
         const rangeFov = get('cfg-fov');
         const checkGrid = get('cfg-grid');
@@ -1630,6 +1737,9 @@ class ConfigEditor {
         const checkTrails = get('cfg-trails');
         const rangeTrail = get('cfg-trail-len');
         const checkLightMode = get('cfg-light-mode');
+        sensorPos === null || sensorPos === void 0 ? void 0 : sensorPos.addEventListener('change', () => {
+            this.onConfigChange({ sensor_position: sensorPos.value });
+        });
         rangeMax === null || rangeMax === void 0 ? void 0 : rangeMax.addEventListener('input', () => {
             const val = parseInt(rangeMax.value);
             this.onConfigChange({ max_range: val });
@@ -1705,6 +1815,16 @@ class ConfigEditor {
  * The editor fires a `config-changed` CustomEvent (bubbling, composed) whenever
  * the user changes a field. HA reads `event.detail.config` and updates the card.
  */
+const SENSOR_POSITIONS = [
+    { value: 'bottom', label: 'Bottom Wall', icon: '⬇' },
+    { value: 'top', label: 'Top Wall', icon: '⬆' },
+    { value: 'left', label: 'Left Wall', icon: '⬅' },
+    { value: 'right', label: 'Right Wall', icon: '➡' },
+    { value: 'bottom-left', label: 'Bottom-Left', icon: '↙' },
+    { value: 'bottom-right', label: 'Bottom-Right', icon: '↘' },
+    { value: 'top-left', label: 'Top-Left', icon: '↖' },
+    { value: 'top-right', label: 'Top-Right', icon: '↗' },
+];
 const EDITOR_STYLES = `
   :host {
     display: block;
@@ -1791,6 +1911,49 @@ const EDITOR_STYLES = `
     display: block;
     width: 100%;
   }
+  .wall-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 40px);
+    gap: 4px;
+    max-width: 200px;
+    margin: 8px 0;
+  }
+  .wall-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 6px;
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color, #212121);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .wall-btn:hover {
+    background: var(--primary-color, #3b82f6);
+    color: #fff;
+    border-color: var(--primary-color, #3b82f6);
+  }
+  .wall-btn.selected {
+    background: var(--primary-color, #3b82f6);
+    color: #fff;
+    border-color: var(--primary-color, #3b82f6);
+    font-weight: 600;
+  }
+  .wall-btn.wall-center {
+    background: var(--secondary-background-color, #f0f0f0);
+    cursor: default;
+    font-size: 10px;
+    color: var(--secondary-text-color, #888);
+  }
+  .wall-btn.wall-center:hover {
+    background: var(--secondary-background-color, #f0f0f0);
+    color: var(--secondary-text-color, #888);
+    border-color: var(--divider-color, #e0e0e0);
+  }
 `;
 class LD2450RadarCardEditor extends HTMLElement {
     constructor() {
@@ -1830,8 +1993,26 @@ class LD2450RadarCardEditor extends HTMLElement {
         return match ? match[1] : null;
     }
     _render() {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
         const c = this._config;
+        const currentPos = (_a = c.sensor_position) !== null && _a !== void 0 ? _a : 'bottom';
+        // Wall grid mapping: [row][col] → SensorPosition | null
+        const wallGrid = [
+            'top-left', 'top', 'top-right',
+            'left', null, 'right',
+            'bottom-left', 'bottom', 'bottom-right',
+        ];
+        const wallGridHTML = wallGrid.map((pos) => {
+            var _a, _b, _c;
+            if (pos === null) {
+                return `<div class="wall-btn wall-center">Room</div>`;
+            }
+            const info = SENSOR_POSITIONS.find(p => p.value === pos);
+            return `<button class="wall-btn ${currentPos === pos ? 'selected' : ''}"
+        data-wall-pos="${pos}" title="${(_a = info === null || info === void 0 ? void 0 : info.label) !== null && _a !== void 0 ? _a : pos}" aria-label="${(_b = info === null || info === void 0 ? void 0 : info.label) !== null && _b !== void 0 ? _b : pos}">
+        ${(_c = info === null || info === void 0 ? void 0 : info.icon) !== null && _c !== void 0 ? _c : ''}
+      </button>`;
+        }).join('');
         this._shadow.innerHTML = `
       <style>${EDITOR_STYLES}</style>
 
@@ -1843,7 +2024,7 @@ class LD2450RadarCardEditor extends HTMLElement {
           type="text"
           id="device-name"
           placeholder="e.g. living_room_radar"
-          value="${this._escapeAttr((_a = c.device_name) !== null && _a !== void 0 ? _a : '')}"
+          value="${this._escapeAttr((_b = c.device_name) !== null && _b !== void 0 ? _b : '')}"
           aria-label="ESPHome device name prefix"
         >
         <div class="hint">
@@ -1862,6 +2043,18 @@ class LD2450RadarCardEditor extends HTMLElement {
         </div>
       </div>
 
+      <div class="section-title">Sensor Mounting</div>
+
+      <div class="editor-row">
+        <label>Sensor Position</label>
+        <div class="hint" style="margin-top:0;margin-bottom:6px">
+          Click where the sensor is mounted on the wall. Corner positions are for sensors in room corners.
+        </div>
+        <div class="wall-grid" id="wall-grid">
+          ${wallGridHTML}
+        </div>
+      </div>
+
       <div class="section-title">General</div>
 
       <div class="editor-row">
@@ -1870,7 +2063,7 @@ class LD2450RadarCardEditor extends HTMLElement {
           type="text"
           id="title"
           placeholder="LD2450 Radar"
-          value="${this._escapeAttr((_b = c.title) !== null && _b !== void 0 ? _b : '')}"
+          value="${this._escapeAttr((_c = c.title) !== null && _c !== void 0 ? _c : '')}"
           aria-label="Card title"
         >
       </div>
@@ -1881,8 +2074,8 @@ class LD2450RadarCardEditor extends HTMLElement {
         <div class="row-inline">
           <label for="max-range">Max Range</label>
           <input type="range" id="max-range" min="1000" max="8000" step="500"
-            value="${(_c = c.max_range) !== null && _c !== void 0 ? _c : 6000}" aria-label="Max range in mm">
-          <span class="range-value" id="max-range-val">${(((_d = c.max_range) !== null && _d !== void 0 ? _d : 6000) / 1000).toFixed(1)}m</span>
+            value="${(_d = c.max_range) !== null && _d !== void 0 ? _d : 6000}" aria-label="Max range in mm">
+          <span class="range-value" id="max-range-val">${(((_e = c.max_range) !== null && _e !== void 0 ? _e : 6000) / 1000).toFixed(1)}m</span>
         </div>
       </div>
 
@@ -1890,8 +2083,8 @@ class LD2450RadarCardEditor extends HTMLElement {
         <div class="row-inline">
           <label for="fov-angle">FOV Angle</label>
           <input type="range" id="fov-angle" min="60" max="180" step="10"
-            value="${(_e = c.fov_angle) !== null && _e !== void 0 ? _e : 120}" aria-label="Field of view in degrees">
-          <span class="range-value" id="fov-angle-val">${(_f = c.fov_angle) !== null && _f !== void 0 ? _f : 120}°</span>
+            value="${(_f = c.fov_angle) !== null && _f !== void 0 ? _f : 120}" aria-label="Field of view in degrees">
+          <span class="range-value" id="fov-angle-val">${(_g = c.fov_angle) !== null && _g !== void 0 ? _g : 120}°</span>
         </div>
       </div>
 
@@ -1900,7 +2093,7 @@ class LD2450RadarCardEditor extends HTMLElement {
       <div class="editor-row">
         <div class="row-inline">
           <label for="show-grid">Show Grid</label>
-          <input type="checkbox" id="show-grid" ${((_g = c.show_grid) !== null && _g !== void 0 ? _g : true) ? 'checked' : ''}
+          <input type="checkbox" id="show-grid" ${((_h = c.show_grid) !== null && _h !== void 0 ? _h : true) ? 'checked' : ''}
             aria-label="Show polar grid">
         </div>
       </div>
@@ -1908,7 +2101,7 @@ class LD2450RadarCardEditor extends HTMLElement {
       <div class="editor-row">
         <div class="row-inline">
           <label for="show-sweep">Show Sweep</label>
-          <input type="checkbox" id="show-sweep" ${((_h = c.show_sweep) !== null && _h !== void 0 ? _h : true) ? 'checked' : ''}
+          <input type="checkbox" id="show-sweep" ${((_j = c.show_sweep) !== null && _j !== void 0 ? _j : true) ? 'checked' : ''}
             aria-label="Show radar sweep animation">
         </div>
       </div>
@@ -1916,7 +2109,7 @@ class LD2450RadarCardEditor extends HTMLElement {
       <div class="editor-row">
         <div class="row-inline">
           <label for="show-trails">Show Trails</label>
-          <input type="checkbox" id="show-trails" ${((_j = c.show_trails) !== null && _j !== void 0 ? _j : true) ? 'checked' : ''}
+          <input type="checkbox" id="show-trails" ${((_k = c.show_trails) !== null && _k !== void 0 ? _k : true) ? 'checked' : ''}
             aria-label="Show motion trails">
         </div>
       </div>
@@ -1925,8 +2118,8 @@ class LD2450RadarCardEditor extends HTMLElement {
         <div class="row-inline">
           <label for="trail-length">Trail Length</label>
           <input type="range" id="trail-length" min="2" max="30" step="1"
-            value="${(_k = c.trail_length) !== null && _k !== void 0 ? _k : 12}" aria-label="Trail length">
-          <span class="range-value" id="trail-length-val">${(_l = c.trail_length) !== null && _l !== void 0 ? _l : 12}</span>
+            value="${(_l = c.trail_length) !== null && _l !== void 0 ? _l : 12}" aria-label="Trail length">
+          <span class="range-value" id="trail-length-val">${(_m = c.trail_length) !== null && _m !== void 0 ? _m : 12}</span>
         </div>
       </div>
     `;
@@ -2010,6 +2203,14 @@ class LD2450RadarCardEditor extends HTMLElement {
                 trailLengthVal.textContent = `${val}`;
             this._fireConfigChanged({ trail_length: val });
         });
+        // Wall position buttons
+        shadow.querySelectorAll('[data-wall-pos]').forEach(el => {
+            el.addEventListener('click', () => {
+                const pos = el.dataset['wallPos'];
+                this._fireConfigChanged({ sensor_position: pos });
+                this._render(); // re-render to update selected state
+            });
+        });
     }
     _escapeAttr(value) {
         return value
@@ -2082,7 +2283,7 @@ function buildEntityIds(deviceName, targetIds) {
     return result;
 }
 
-var cardCss = ":host {\n  display: block;\n  font-family: 'Inter', system-ui, -apple-system, sans-serif;\n  --radar-bg: #0a0e1a;\n  --radar-grid: rgba(99, 179, 237, 0.08);\n  --radar-sweep: rgba(99, 179, 237, 0.15);\n  --radar-fov: rgba(56, 189, 248, 0.06);\n  --radar-fov-border: rgba(56, 189, 248, 0.4);\n  --target-primary: #38bdf8;\n  --target-trail: rgba(56, 189, 248, 0.3);\n  --zone-fill: rgba(139, 92, 246, 0.15);\n  --zone-border: rgba(139, 92, 246, 0.7);\n  --zone-active: rgba(167, 139, 250, 0.3);\n  --furniture-fill: rgba(148, 163, 184, 0.12);\n  --furniture-border: rgba(148, 163, 184, 0.5);\n  --glass-surface: rgba(15, 23, 42, 0.8);\n  --glass-border: rgba(99, 179, 237, 0.12);\n  --text-primary: #e2e8f0;\n  --text-muted: rgba(148, 163, 184, 0.7);\n}\n\n/* Light color scheme */\n:host(.light-scheme) {\n  --radar-bg: #f0f4f8;\n  --radar-grid: rgba(59, 130, 246, 0.1);\n  --radar-sweep: rgba(59, 130, 246, 0.12);\n  --radar-fov: rgba(14, 165, 233, 0.07);\n  --radar-fov-border: rgba(14, 165, 233, 0.5);\n  --target-primary: #0284c7;\n  --target-trail: rgba(2, 132, 199, 0.3);\n  --zone-fill: rgba(109, 40, 217, 0.1);\n  --zone-border: rgba(109, 40, 217, 0.6);\n  --zone-active: rgba(139, 92, 246, 0.25);\n  --furniture-fill: rgba(100, 116, 139, 0.12);\n  --furniture-border: rgba(100, 116, 139, 0.55);\n  --glass-surface: rgba(255, 255, 255, 0.92);\n  --glass-border: rgba(59, 130, 246, 0.18);\n  --text-primary: #1e293b;\n  --text-muted: rgba(71, 85, 105, 0.8);\n}\n\n.card-container {\n  background: var(--glass-surface);\n  border: 1px solid var(--glass-border);\n  border-radius: 16px;\n  backdrop-filter: blur(20px);\n  -webkit-backdrop-filter: blur(20px);\n  overflow: hidden;\n  color: var(--text-primary);\n}\n\n.card-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(15, 23, 42, 0.4);\n}\n\n.card-title {\n  font-size: 15px;\n  font-weight: 600;\n  letter-spacing: 0.02em;\n  color: var(--text-primary);\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title::before {\n  content: '';\n  display: inline-block;\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  background: #38bdf8;\n  box-shadow: 0 0 8px #38bdf8;\n  animation: pulse-dot 2s ease-in-out infinite;\n}\n\n@keyframes pulse-dot {\n  0%, 100% { opacity: 1; transform: scale(1); }\n  50% { opacity: 0.6; transform: scale(0.85); }\n}\n\n.header-actions {\n  display: flex;\n  gap: 8px;\n}\n\n.icon-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 6px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.icon-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.icon-btn.active {\n  background: rgba(56, 189, 248, 0.2);\n  border-color: rgba(56, 189, 248, 0.6);\n  color: #38bdf8;\n}\n\n.card-body {\n  display: flex;\n  flex-direction: row;\n  min-height: 400px;\n}\n\n.canvas-wrap {\n  flex: 1;\n  position: relative;\n  background: var(--radar-bg);\n  min-width: 0;\n}\n\ncanvas {\n  display: block;\n  width: 100%;\n  height: 100%;\n  cursor: crosshair;\n}\n\ncanvas.cursor-default {\n  cursor: default;\n}\n\ncanvas.cursor-crosshair {\n  cursor: crosshair;\n}\n\ncanvas.cursor-grab {\n  cursor: grab;\n}\n\ncanvas.cursor-grabbing {\n  cursor: grabbing;\n}\n\ncanvas.cursor-move {\n  cursor: move;\n}\n\n.sidebar {\n  width: 200px;\n  min-width: 160px;\n  background: rgba(10, 14, 26, 0.7);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  overflow-y: auto;\n  overflow-x: hidden;\n}\n\n:host(.light-scheme) .sidebar {\n  background: rgba(241, 245, 249, 0.85);\n}\n\n:host(.light-scheme) .card-header {\n  background: rgba(248, 250, 252, 0.6);\n}\n\n:host(.light-scheme) .edit-toolbar {\n  background: rgba(241, 245, 249, 0.7);\n}\n\n:host(.light-scheme) .settings-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .zone-name-dialog {\n  background: rgba(255, 255, 255, 0.99);\n  border-color: rgba(59, 130, 246, 0.35);\n}\n\n:host(.light-scheme) .yaml-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .yaml-block {\n  background: rgba(241, 245, 249, 0.8);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .yaml-code {\n  color: #334155;\n}\n\n:host(.light-scheme) .icon-btn {\n  background: rgba(59, 130, 246, 0.08);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .icon-btn:hover {\n  background: rgba(59, 130, 246, 0.15);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .action-btn {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.18);\n}\n\n:host(.light-scheme) .action-btn:hover {\n  background: rgba(59, 130, 246, 0.14);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .furniture-btn {\n  background: rgba(59, 130, 246, 0.05);\n  border-color: rgba(59, 130, 246, 0.14);\n}\n\n:host(.light-scheme) .furniture-btn:hover {\n  background: rgba(59, 130, 246, 0.12);\n  border-color: rgba(59, 130, 246, 0.3);\n}\n\n:host(.light-scheme) .zone-name-input {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.2);\n  color: var(--text-primary);\n}\n\n.sidebar-section {\n  padding: 12px;\n  border-bottom: 1px solid rgba(99, 179, 237, 0.06);\n}\n\n.sidebar-label {\n  font-size: 10px;\n  font-weight: 700;\n  letter-spacing: 0.1em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n  margin-bottom: 8px;\n}\n\n.zone-item {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.zone-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n  margin-right: 6px;\n}\n\n.zone-name {\n  flex: 1;\n  color: var(--text-primary);\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.zone-status {\n  font-size: 10px;\n  padding: 2px 6px;\n  border-radius: 4px;\n  font-weight: 600;\n}\n\n.zone-status.active {\n  background: rgba(167, 139, 250, 0.25);\n  color: #a78bfa;\n}\n\n.zone-status.clear {\n  color: var(--text-muted);\n}\n\n.target-item {\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.target-header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  margin-bottom: 2px;\n}\n\n.target-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n}\n\n.target-label {\n  font-weight: 600;\n  color: var(--text-primary);\n}\n\n.target-inactive {\n  color: var(--text-muted);\n  font-style: italic;\n}\n\n.target-coords {\n  font-size: 11px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  padding-left: 14px;\n}\n\n.sidebar-actions {\n  padding: 12px;\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  margin-top: auto;\n}\n\n.action-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 7px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  text-align: left;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.action-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.action-btn.active {\n  background: rgba(139, 92, 246, 0.2);\n  border-color: rgba(139, 92, 246, 0.6);\n  color: #a78bfa;\n}\n\n/* Edit toolbar */\n.edit-toolbar {\n  padding: 8px 12px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(10, 14, 26, 0.5);\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  align-items: center;\n}\n\n.toolbar-group {\n  display: flex;\n  gap: 4px;\n  align-items: center;\n}\n\n.toolbar-separator {\n  width: 1px;\n  height: 20px;\n  background: var(--glass-border);\n  margin: 0 4px;\n}\n\n/* Furniture picker */\n.furniture-picker {\n  padding: 8px;\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 4px;\n}\n\n.furniture-btn {\n  background: rgba(99, 179, 237, 0.05);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 6px;\n  cursor: pointer;\n  padding: 6px 4px;\n  font-size: 10px;\n  color: var(--text-muted);\n  text-align: center;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n}\n\n.furniture-btn:hover {\n  background: rgba(99, 179, 237, 0.12);\n  border-color: rgba(99, 179, 237, 0.3);\n  color: var(--text-primary);\n}\n\n.furniture-btn.selected {\n  background: rgba(56, 189, 248, 0.15);\n  border-color: rgba(56, 189, 248, 0.5);\n  color: #38bdf8;\n}\n\n.furniture-btn-icon {\n  font-size: 16px;\n  line-height: 1;\n}\n\n.furniture-btn-label {\n  font-size: 9px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  max-width: 100%;\n}\n\n/* Settings overlay */\n.settings-overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  width: 280px;\n  background: rgba(10, 14, 26, 0.95);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  z-index: 100;\n  overflow-y: auto;\n  backdrop-filter: blur(20px);\n  transform: translateX(100%);\n  transition: transform 0.2s ease;\n}\n\n.settings-overlay.open {\n  transform: translateX(0);\n}\n\n.settings-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  font-weight: 600;\n}\n\n.settings-body {\n  padding: 12px 16px;\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n}\n\n.setting-group {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.setting-label {\n  font-size: 11px;\n  font-weight: 600;\n  letter-spacing: 0.05em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n}\n\n.setting-row {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.setting-row label {\n  font-size: 13px;\n  color: var(--text-primary);\n  flex: 1;\n}\n\n.setting-row input[type=\"range\"] {\n  flex: 1;\n  accent-color: #38bdf8;\n}\n\n.setting-row input[type=\"checkbox\"] {\n  accent-color: #38bdf8;\n  width: 16px;\n  height: 16px;\n}\n\n.setting-row input[type=\"color\"] {\n  width: 32px;\n  height: 24px;\n  border: 1px solid var(--glass-border);\n  border-radius: 4px;\n  cursor: pointer;\n  background: none;\n  padding: 0;\n}\n\n.setting-value {\n  font-size: 12px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  min-width: 36px;\n  text-align: right;\n}\n\n/* Zone name dialog */\n.zone-name-dialog {\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n  background: rgba(15, 23, 42, 0.98);\n  border: 1px solid rgba(99, 179, 237, 0.3);\n  border-radius: 12px;\n  padding: 20px;\n  z-index: 200;\n  min-width: 240px;\n  backdrop-filter: blur(20px);\n  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);\n}\n\n.zone-name-dialog h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0 0 12px 0;\n  color: var(--text-primary);\n}\n\n.zone-name-input {\n  width: 100%;\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  padding: 8px 10px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 13px;\n  box-sizing: border-box;\n  outline: none;\n}\n\n.zone-name-input:focus {\n  border-color: rgba(99, 179, 237, 0.5);\n  background: rgba(99, 179, 237, 0.12);\n}\n\n.dialog-actions {\n  display: flex;\n  gap: 8px;\n  margin-top: 12px;\n  justify-content: flex-end;\n}\n\n.btn-primary {\n  background: rgba(56, 189, 248, 0.2);\n  border: 1px solid rgba(56, 189, 248, 0.5);\n  border-radius: 6px;\n  color: #38bdf8;\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-primary:hover {\n  background: rgba(56, 189, 248, 0.3);\n}\n\n.btn-secondary {\n  background: transparent;\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-secondary:hover {\n  background: rgba(99, 179, 237, 0.08);\n}\n\n/* YAML export overlay */\n.yaml-overlay {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  background: rgba(10, 14, 26, 0.98);\n  z-index: 300;\n  display: flex;\n  flex-direction: column;\n  padding: 16px;\n  overflow-y: auto;\n}\n\n.yaml-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 12px;\n  flex-shrink: 0;\n}\n\n.yaml-header h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0;\n  color: var(--text-primary);\n}\n\n.yaml-block {\n  background: rgba(0, 0, 0, 0.4);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 8px;\n  padding: 12px;\n  flex: 1;\n  overflow-y: auto;\n  position: relative;\n}\n\n.yaml-code {\n  font-family: 'Fira Mono', 'Consolas', monospace;\n  font-size: 11px;\n  color: #94a3b8;\n  white-space: pre;\n  line-height: 1.5;\n}\n\n.copy-btn {\n  position: absolute;\n  top: 8px;\n  right: 8px;\n  background: rgba(99, 179, 237, 0.12);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 4px 8px;\n  font-size: 11px;\n  font-family: inherit;\n  transition: background 0.15s;\n}\n\n.copy-btn:hover {\n  background: rgba(99, 179, 237, 0.2);\n  color: var(--text-primary);\n}\n\n/* Tooltip */\n.tooltip {\n  position: absolute;\n  background: rgba(15, 23, 42, 0.95);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  padding: 5px 8px;\n  font-size: 11px;\n  color: var(--text-muted);\n  pointer-events: none;\n  z-index: 50;\n  white-space: nowrap;\n  font-variant-numeric: tabular-nums;\n}\n\n/* Responsive */\n@media (max-width: 500px) {\n  .card-body {\n    flex-direction: column;\n  }\n  .sidebar {\n    width: 100%;\n    border-left: none;\n    border-top: 1px solid var(--glass-border);\n    flex-direction: row;\n    flex-wrap: wrap;\n    max-height: 200px;\n    overflow-y: auto;\n  }\n  .sidebar-section {\n    flex: 1;\n    min-width: 140px;\n  }\n  .sidebar-actions {\n    flex-direction: row;\n    flex-wrap: wrap;\n    margin-top: 0;\n    padding: 8px;\n  }\n}\n";
+var cardCss = ":host {\n  display: block;\n  font-family: 'Inter', system-ui, -apple-system, sans-serif;\n  --radar-bg: #0a0e1a;\n  --radar-grid: rgba(99, 179, 237, 0.08);\n  --radar-sweep: rgba(99, 179, 237, 0.15);\n  --radar-fov: rgba(56, 189, 248, 0.06);\n  --radar-fov-border: rgba(56, 189, 248, 0.4);\n  --target-primary: #38bdf8;\n  --target-trail: rgba(56, 189, 248, 0.3);\n  --zone-fill: rgba(139, 92, 246, 0.15);\n  --zone-border: rgba(139, 92, 246, 0.7);\n  --zone-active: rgba(167, 139, 250, 0.3);\n  --furniture-fill: rgba(148, 163, 184, 0.12);\n  --furniture-border: rgba(148, 163, 184, 0.5);\n  --glass-surface: rgba(15, 23, 42, 0.8);\n  --glass-border: rgba(99, 179, 237, 0.12);\n  --text-primary: #e2e8f0;\n  --text-muted: rgba(148, 163, 184, 0.7);\n}\n\n/* Light color scheme */\n:host(.light-scheme) {\n  --radar-bg: #f0f4f8;\n  --radar-grid: rgba(59, 130, 246, 0.1);\n  --radar-sweep: rgba(59, 130, 246, 0.12);\n  --radar-fov: rgba(14, 165, 233, 0.07);\n  --radar-fov-border: rgba(14, 165, 233, 0.5);\n  --target-primary: #0284c7;\n  --target-trail: rgba(2, 132, 199, 0.3);\n  --zone-fill: rgba(109, 40, 217, 0.1);\n  --zone-border: rgba(109, 40, 217, 0.6);\n  --zone-active: rgba(139, 92, 246, 0.25);\n  --furniture-fill: rgba(100, 116, 139, 0.12);\n  --furniture-border: rgba(100, 116, 139, 0.55);\n  --glass-surface: rgba(255, 255, 255, 0.92);\n  --glass-border: rgba(59, 130, 246, 0.18);\n  --text-primary: #1e293b;\n  --text-muted: rgba(71, 85, 105, 0.8);\n}\n\n.card-container {\n  background: var(--glass-surface);\n  border: 1px solid var(--glass-border);\n  border-radius: 16px;\n  backdrop-filter: blur(20px);\n  -webkit-backdrop-filter: blur(20px);\n  overflow: hidden;\n  color: var(--text-primary);\n  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);\n}\n\n.card-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 14px 18px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(15, 23, 42, 0.4);\n}\n\n.card-title {\n  font-size: 15px;\n  font-weight: 600;\n  letter-spacing: 0.02em;\n  color: var(--text-primary);\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title::before {\n  content: '';\n  display: inline-block;\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  background: #38bdf8;\n  box-shadow: 0 0 8px #38bdf8;\n  animation: pulse-dot 2s ease-in-out infinite;\n}\n\n@keyframes pulse-dot {\n  0%, 100% { opacity: 1; transform: scale(1); }\n  50% { opacity: 0.6; transform: scale(0.85); }\n}\n\n.header-actions {\n  display: flex;\n  gap: 8px;\n}\n\n.icon-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 6px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.icon-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.icon-btn.active {\n  background: rgba(56, 189, 248, 0.2);\n  border-color: rgba(56, 189, 248, 0.6);\n  color: #38bdf8;\n}\n\n.card-body {\n  display: flex;\n  flex-direction: row;\n  min-height: 400px;\n}\n\n.canvas-wrap {\n  flex: 1;\n  position: relative;\n  background: var(--radar-bg);\n  min-width: 0;\n}\n\ncanvas {\n  display: block;\n  width: 100%;\n  height: 100%;\n  cursor: crosshair;\n}\n\ncanvas.cursor-default {\n  cursor: default;\n}\n\ncanvas.cursor-crosshair {\n  cursor: crosshair;\n}\n\ncanvas.cursor-grab {\n  cursor: grab;\n}\n\ncanvas.cursor-grabbing {\n  cursor: grabbing;\n}\n\ncanvas.cursor-move {\n  cursor: move;\n}\n\n.sidebar {\n  width: 200px;\n  min-width: 160px;\n  background: rgba(10, 14, 26, 0.7);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  overflow-y: auto;\n  overflow-x: hidden;\n}\n\n:host(.light-scheme) .sidebar {\n  background: rgba(241, 245, 249, 0.85);\n}\n\n:host(.light-scheme) .card-header {\n  background: rgba(248, 250, 252, 0.6);\n}\n\n:host(.light-scheme) .edit-toolbar {\n  background: rgba(241, 245, 249, 0.7);\n}\n\n:host(.light-scheme) .settings-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .zone-name-dialog {\n  background: rgba(255, 255, 255, 0.99);\n  border-color: rgba(59, 130, 246, 0.35);\n}\n\n:host(.light-scheme) .yaml-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .yaml-block {\n  background: rgba(241, 245, 249, 0.8);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .yaml-code {\n  color: #334155;\n}\n\n:host(.light-scheme) .icon-btn {\n  background: rgba(59, 130, 246, 0.08);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .icon-btn:hover {\n  background: rgba(59, 130, 246, 0.15);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .action-btn {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.18);\n}\n\n:host(.light-scheme) .action-btn:hover {\n  background: rgba(59, 130, 246, 0.14);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .furniture-btn {\n  background: rgba(59, 130, 246, 0.05);\n  border-color: rgba(59, 130, 246, 0.14);\n}\n\n:host(.light-scheme) .furniture-btn:hover {\n  background: rgba(59, 130, 246, 0.12);\n  border-color: rgba(59, 130, 246, 0.3);\n}\n\n:host(.light-scheme) .zone-name-input {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.2);\n  color: var(--text-primary);\n}\n\n.sidebar-section {\n  padding: 12px;\n  border-bottom: 1px solid rgba(99, 179, 237, 0.06);\n}\n\n.sidebar-label {\n  font-size: 10px;\n  font-weight: 700;\n  letter-spacing: 0.1em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n  margin-bottom: 8px;\n}\n\n.zone-item {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.zone-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n  margin-right: 6px;\n}\n\n.zone-name {\n  flex: 1;\n  color: var(--text-primary);\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.zone-status {\n  font-size: 10px;\n  padding: 2px 6px;\n  border-radius: 4px;\n  font-weight: 600;\n}\n\n.zone-status.active {\n  background: rgba(167, 139, 250, 0.25);\n  color: #a78bfa;\n}\n\n.zone-status.clear {\n  color: var(--text-muted);\n}\n\n.target-item {\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.target-header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  margin-bottom: 2px;\n}\n\n.target-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n}\n\n.target-label {\n  font-weight: 600;\n  color: var(--text-primary);\n}\n\n.target-inactive {\n  color: var(--text-muted);\n  font-style: italic;\n}\n\n.target-coords {\n  font-size: 11px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  padding-left: 14px;\n}\n\n.sidebar-actions {\n  padding: 12px;\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  margin-top: auto;\n}\n\n.action-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 7px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  text-align: left;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.action-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.action-btn.active {\n  background: rgba(139, 92, 246, 0.2);\n  border-color: rgba(139, 92, 246, 0.6);\n  color: #a78bfa;\n}\n\n/* Edit toolbar */\n.edit-toolbar {\n  padding: 8px 12px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(10, 14, 26, 0.5);\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  align-items: center;\n}\n\n.toolbar-group {\n  display: flex;\n  gap: 4px;\n  align-items: center;\n}\n\n.toolbar-separator {\n  width: 1px;\n  height: 20px;\n  background: var(--glass-border);\n  margin: 0 4px;\n}\n\n/* Furniture picker */\n.furniture-picker {\n  padding: 8px;\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 4px;\n}\n\n.furniture-btn {\n  background: rgba(99, 179, 237, 0.05);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 6px;\n  cursor: pointer;\n  padding: 6px 4px;\n  font-size: 10px;\n  color: var(--text-muted);\n  text-align: center;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n}\n\n.furniture-btn:hover {\n  background: rgba(99, 179, 237, 0.12);\n  border-color: rgba(99, 179, 237, 0.3);\n  color: var(--text-primary);\n}\n\n.furniture-btn.selected {\n  background: rgba(56, 189, 248, 0.15);\n  border-color: rgba(56, 189, 248, 0.5);\n  color: #38bdf8;\n}\n\n.furniture-btn-icon {\n  font-size: 16px;\n  line-height: 1;\n}\n\n.furniture-btn-label {\n  font-size: 9px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  max-width: 100%;\n}\n\n/* Settings overlay */\n.settings-overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  width: 280px;\n  background: rgba(10, 14, 26, 0.95);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  z-index: 100;\n  overflow-y: auto;\n  backdrop-filter: blur(20px);\n  transform: translateX(100%);\n  transition: transform 0.2s ease;\n}\n\n.settings-overlay.open {\n  transform: translateX(0);\n}\n\n.settings-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  font-weight: 600;\n}\n\n.settings-body {\n  padding: 12px 16px;\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n}\n\n.setting-group {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.setting-label {\n  font-size: 11px;\n  font-weight: 600;\n  letter-spacing: 0.05em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n}\n\n.setting-row {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.setting-row label {\n  font-size: 13px;\n  color: var(--text-primary);\n  flex: 1;\n}\n\n.setting-row select {\n  flex: 1;\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid var(--glass-border);\n  border-radius: 6px;\n  padding: 5px 8px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 12px;\n  cursor: pointer;\n  outline: none;\n}\n\n.setting-row select:focus {\n  border-color: rgba(56, 189, 248, 0.5);\n}\n\n:host(.light-scheme) .setting-row select {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.18);\n}\n\n.setting-row input[type=\"range\"] {\n  flex: 1;\n  accent-color: #38bdf8;\n}\n\n.setting-row input[type=\"checkbox\"] {\n  accent-color: #38bdf8;\n  width: 16px;\n  height: 16px;\n}\n\n.setting-row input[type=\"color\"] {\n  width: 32px;\n  height: 24px;\n  border: 1px solid var(--glass-border);\n  border-radius: 4px;\n  cursor: pointer;\n  background: none;\n  padding: 0;\n}\n\n.setting-value {\n  font-size: 12px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  min-width: 36px;\n  text-align: right;\n}\n\n/* Zone name dialog */\n.zone-name-dialog {\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n  background: rgba(15, 23, 42, 0.98);\n  border: 1px solid rgba(99, 179, 237, 0.3);\n  border-radius: 12px;\n  padding: 20px;\n  z-index: 200;\n  min-width: 240px;\n  backdrop-filter: blur(20px);\n  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);\n}\n\n.zone-name-dialog h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0 0 12px 0;\n  color: var(--text-primary);\n}\n\n.zone-name-input {\n  width: 100%;\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  padding: 8px 10px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 13px;\n  box-sizing: border-box;\n  outline: none;\n}\n\n.zone-name-input:focus {\n  border-color: rgba(99, 179, 237, 0.5);\n  background: rgba(99, 179, 237, 0.12);\n}\n\n.dialog-actions {\n  display: flex;\n  gap: 8px;\n  margin-top: 12px;\n  justify-content: flex-end;\n}\n\n.btn-primary {\n  background: rgba(56, 189, 248, 0.2);\n  border: 1px solid rgba(56, 189, 248, 0.5);\n  border-radius: 6px;\n  color: #38bdf8;\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-primary:hover {\n  background: rgba(56, 189, 248, 0.3);\n}\n\n.btn-secondary {\n  background: transparent;\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-secondary:hover {\n  background: rgba(99, 179, 237, 0.08);\n}\n\n/* YAML export overlay */\n.yaml-overlay {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  background: rgba(10, 14, 26, 0.98);\n  z-index: 300;\n  display: flex;\n  flex-direction: column;\n  padding: 16px;\n  overflow-y: auto;\n}\n\n.yaml-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 12px;\n  flex-shrink: 0;\n}\n\n.yaml-header h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0;\n  color: var(--text-primary);\n}\n\n.yaml-block {\n  background: rgba(0, 0, 0, 0.4);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 8px;\n  padding: 12px;\n  flex: 1;\n  overflow-y: auto;\n  position: relative;\n}\n\n.yaml-code {\n  font-family: 'Fira Mono', 'Consolas', monospace;\n  font-size: 11px;\n  color: #94a3b8;\n  white-space: pre;\n  line-height: 1.5;\n}\n\n.copy-btn {\n  position: absolute;\n  top: 8px;\n  right: 8px;\n  background: rgba(99, 179, 237, 0.12);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 4px 8px;\n  font-size: 11px;\n  font-family: inherit;\n  transition: background 0.15s;\n}\n\n.copy-btn:hover {\n  background: rgba(99, 179, 237, 0.2);\n  color: var(--text-primary);\n}\n\n/* Tooltip */\n.tooltip {\n  position: absolute;\n  background: rgba(15, 23, 42, 0.95);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  padding: 5px 8px;\n  font-size: 11px;\n  color: var(--text-muted);\n  pointer-events: none;\n  z-index: 50;\n  white-space: nowrap;\n  font-variant-numeric: tabular-nums;\n}\n\n/* Responsive */\n@media (max-width: 500px) {\n  .card-body {\n    flex-direction: column;\n  }\n  .sidebar {\n    width: 100%;\n    border-left: none;\n    border-top: 1px solid var(--glass-border);\n    flex-direction: row;\n    flex-wrap: wrap;\n    max-height: 200px;\n    overflow-y: auto;\n  }\n  .sidebar-section {\n    flex: 1;\n    min-width: 140px;\n  }\n  .sidebar-actions {\n    flex-direction: row;\n    flex-wrap: wrap;\n    margin-top: 0;\n    padding: 8px;\n  }\n}\n";
 
 var _a;
 const SENSOR_MARGIN = 40;
@@ -2096,6 +2297,7 @@ const DEFAULT_CONFIG = {
     show_sweep: true,
     show_trails: true,
     trail_length: 12,
+    sensor_position: 'bottom',
     targets: [
         { id: 1, color: '#38bdf8', label: 'T1' },
         { id: 2, color: '#f472b6', label: 'T2' },
@@ -2541,7 +2743,7 @@ class LD2450RadarCard extends HTMLElement {
         (_a = canvas.parentNode) === null || _a === void 0 ? void 0 : _a.replaceChild(newCanvas, canvas);
         let mouseIsDown = false;
         newCanvas.addEventListener('mousemove', (e) => {
-            var _a, _b, _c, _d, _f, _g;
+            var _a, _b, _c, _d, _f, _g, _h, _j;
             const pos = this._getCanvasPos(newCanvas, e);
             const tooltip = this._shadow.getElementById('coord-tooltip');
             if (this._editMode === 'draw-zone' && this._zoneEditor) {
@@ -2551,8 +2753,8 @@ class LD2450RadarCard extends HTMLElement {
             if (mouseIsDown) {
                 if (this._editMode === 'add-furniture' && this._dragPlacingId && this._dragPlaceStartMm) {
                     // Update the dragged item's size and center based on current mouse position
-                    const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
-                    const item = (_b = this._furnitureLayer) === null || _b === void 0 ? void 0 : _b.getItems().find(i => i.id === this._dragPlacingId);
+                    const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN, (_b = this._config.sensor_position) !== null && _b !== void 0 ? _b : 'bottom');
+                    const item = (_c = this._furnitureLayer) === null || _c === void 0 ? void 0 : _c.getItems().find(i => i.id === this._dragPlacingId);
                     if (item) {
                         const w = Math.abs(mm.x - this._dragPlaceStartMm.x);
                         const h = Math.abs(mm.y - this._dragPlaceStartMm.y);
@@ -2561,18 +2763,18 @@ class LD2450RadarCard extends HTMLElement {
                         item.x = (mm.x + this._dragPlaceStartMm.x) / 2;
                         item.y = (mm.y + this._dragPlaceStartMm.y) / 2;
                         // Config array is synced on mouseup; just mark dirty for live preview
-                        (_c = this._radarCanvas) === null || _c === void 0 ? void 0 : _c.markDirty();
+                        (_d = this._radarCanvas) === null || _d === void 0 ? void 0 : _d.markDirty();
                     }
                 }
                 else if (this._editMode === 'select') {
-                    (_d = this._furnitureLayer) === null || _d === void 0 ? void 0 : _d.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
-                    (_f = this._zoneEditor) === null || _f === void 0 ? void 0 : _f.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
-                    (_g = this._radarCanvas) === null || _g === void 0 ? void 0 : _g.markDirty();
+                    (_f = this._furnitureLayer) === null || _f === void 0 ? void 0 : _f.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
+                    (_g = this._zoneEditor) === null || _g === void 0 ? void 0 : _g.onMouseMove(pos.x, pos.y, newCanvas.width, newCanvas.height);
+                    (_h = this._radarCanvas) === null || _h === void 0 ? void 0 : _h.markDirty();
                 }
             }
             // Coordinate tooltip
             if (tooltip) {
-                const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+                const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN, (_j = this._config.sensor_position) !== null && _j !== void 0 ? _j : 'bottom');
                 tooltip.textContent = `x: ${mm.x.toFixed(0)}mm  y: ${mm.y.toFixed(0)}mm`;
                 tooltip.style.display = 'block';
                 tooltip.style.left = `${pos.x + 12}px`;
@@ -2594,17 +2796,19 @@ class LD2450RadarCard extends HTMLElement {
             }
             else if (this._editMode === 'add-furniture' && this._selectedFurnitureType) {
                 this._pushHistory();
-                const startMm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
                 const placed = (_b = this._furnitureLayer) === null || _b === void 0 ? void 0 : _b.placeAt(this._selectedFurnitureType, pos.x, pos.y, newCanvas.width, newCanvas.height);
                 if (placed) {
-                    // Start with a minimal size; the user drags to define the final dimensions
-                    placed.width = 100;
-                    placed.height = 100;
-                    this._dragPlacingId = placed.id;
-                    this._dragPlaceStartMm = { x: startMm.x, y: startMm.y };
+                    // Place at default size immediately; user can resize via handles in select mode
+                    this._dragPlacingId = null;
+                    this._dragPlaceStartMm = null;
+                    // Switch to select mode after placing and auto-select the new item
+                    this._editMode = 'select';
                 }
                 this._config.furniture = (_d = (_c = this._furnitureLayer) === null || _c === void 0 ? void 0 : _c.getFurnitureConfigs()) !== null && _d !== void 0 ? _d : [];
                 (_f = this._radarCanvas) === null || _f === void 0 ? void 0 : _f.markDirty();
+                // Re-render toolbar to reflect mode change
+                this._renderDOM();
+                this._setupCanvas();
             }
             else if (this._editMode === 'select') {
                 const consumed = (_g = this._furnitureLayer) === null || _g === void 0 ? void 0 : _g.onMouseDown(pos.x, pos.y, newCanvas.width, newCanvas.height);
@@ -2872,6 +3076,7 @@ class LD2450RadarCard extends HTMLElement {
             show_sweep: true,
             show_trails: true,
             trail_length: 12,
+            sensor_position: 'bottom',
             targets: [
                 { id: 1, color: '#38bdf8', label: 'Person 1' },
                 { id: 2, color: '#f472b6', label: 'Person 2' },

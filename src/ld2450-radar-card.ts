@@ -30,6 +30,7 @@ const DEFAULT_CONFIG: CardConfig = {
   show_sweep: true,
   show_trails: true,
   trail_length: 12,
+  sensor_position: 'bottom',
   targets: [
     { id: 1, color: '#38bdf8', label: 'T1' },
     { id: 2, color: '#f472b6', label: 'T2' },
@@ -504,7 +505,7 @@ class LD2450RadarCard extends HTMLElement {
       if (mouseIsDown) {
         if (this._editMode === 'add-furniture' && this._dragPlacingId && this._dragPlaceStartMm) {
           // Update the dragged item's size and center based on current mouse position
-          const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+          const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN, this._config.sensor_position ?? 'bottom');
           const item = this._furnitureLayer?.getItems().find(i => i.id === this._dragPlacingId);
           if (item) {
             const w = Math.abs(mm.x - this._dragPlaceStartMm.x);
@@ -525,7 +526,7 @@ class LD2450RadarCard extends HTMLElement {
 
       // Coordinate tooltip
       if (tooltip) {
-        const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
+        const mm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN, this._config.sensor_position ?? 'bottom');
         tooltip.textContent = `x: ${mm.x.toFixed(0)}mm  y: ${mm.y.toFixed(0)}mm`;
         tooltip.style.display = 'block';
         tooltip.style.left = `${pos.x + 12}px`;
@@ -550,17 +551,19 @@ class LD2450RadarCard extends HTMLElement {
         this._radarCanvas?.markDirty();
       } else if (this._editMode === 'add-furniture' && this._selectedFurnitureType) {
         this._pushHistory();
-        const startMm = canvasToMm(pos.x, pos.y, newCanvas.width, newCanvas.height, this._config.max_range, SENSOR_MARGIN);
         const placed = this._furnitureLayer?.placeAt(this._selectedFurnitureType, pos.x, pos.y, newCanvas.width, newCanvas.height);
         if (placed) {
-          // Start with a minimal size; the user drags to define the final dimensions
-          placed.width = 100;
-          placed.height = 100;
-          this._dragPlacingId = placed.id;
-          this._dragPlaceStartMm = { x: startMm.x, y: startMm.y };
+          // Place at default size immediately; user can resize via handles in select mode
+          this._dragPlacingId = null;
+          this._dragPlaceStartMm = null;
+          // Switch to select mode after placing and auto-select the new item
+          this._editMode = 'select';
         }
         this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
         this._radarCanvas?.markDirty();
+        // Re-render toolbar to reflect mode change
+        this._renderDOM();
+        this._setupCanvas();
       } else if (this._editMode === 'select') {
         const consumed = this._furnitureLayer?.onMouseDown(pos.x, pos.y, newCanvas.width, newCanvas.height);
         if (!consumed) {
@@ -848,6 +851,7 @@ class LD2450RadarCard extends HTMLElement {
       show_sweep: true,
       show_trails: true,
       trail_length: 12,
+      sensor_position: 'bottom',
       targets: [
         { id: 1, color: '#38bdf8', label: 'Person 1' },
         { id: 2, color: '#f472b6', label: 'Person 2' },

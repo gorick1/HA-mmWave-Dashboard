@@ -47,13 +47,14 @@
   -webkit-backdrop-filter: blur(20px);
   overflow: hidden;
   color: var(--text-primary);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
 }
 
 .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--glass-border);
   background: rgba(15, 23, 42, 0.4);
 }
@@ -498,6 +499,28 @@ canvas.cursor-move {
   font-size: 13px;
   color: var(--text-primary);
   flex: 1;
+}
+
+.setting-row select {
+  flex: 1;
+  background: rgba(99, 179, 237, 0.08);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+
+.setting-row select:focus {
+  border-color: rgba(56, 189, 248, 0.5);
+}
+
+:host(.light-scheme) .setting-row select {
+  background: rgba(59, 130, 246, 0.07);
+  border-color: rgba(59, 130, 246, 0.18);
 }
 
 .setting-row input[type="range"] {

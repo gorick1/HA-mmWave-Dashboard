@@ -1,4 +1,4 @@
-import type { CardConfig, HomeAssistant } from '../types/index.js';
+import type { CardConfig, HomeAssistant, SensorPosition } from '../types/index.js';
 
 /**
  * LD2450 Radar Card Editor
@@ -14,6 +14,17 @@ import type { CardConfig, HomeAssistant } from '../types/index.js';
  * The editor fires a `config-changed` CustomEvent (bubbling, composed) whenever
  * the user changes a field. HA reads `event.detail.config` and updates the card.
  */
+
+const SENSOR_POSITIONS: Array<{ value: SensorPosition; label: string; icon: string }> = [
+  { value: 'bottom',       label: 'Bottom Wall',     icon: '⬇' },
+  { value: 'top',          label: 'Top Wall',        icon: '⬆' },
+  { value: 'left',         label: 'Left Wall',       icon: '⬅' },
+  { value: 'right',        label: 'Right Wall',      icon: '➡' },
+  { value: 'bottom-left',  label: 'Bottom-Left',     icon: '↙' },
+  { value: 'bottom-right', label: 'Bottom-Right',    icon: '↘' },
+  { value: 'top-left',     label: 'Top-Left',        icon: '↖' },
+  { value: 'top-right',    label: 'Top-Right',       icon: '↗' },
+];
 
 const EDITOR_STYLES = `
   :host {
@@ -101,6 +112,49 @@ const EDITOR_STYLES = `
     display: block;
     width: 100%;
   }
+  .wall-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 40px);
+    gap: 4px;
+    max-width: 200px;
+    margin: 8px 0;
+  }
+  .wall-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 6px;
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color, #212121);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .wall-btn:hover {
+    background: var(--primary-color, #3b82f6);
+    color: #fff;
+    border-color: var(--primary-color, #3b82f6);
+  }
+  .wall-btn.selected {
+    background: var(--primary-color, #3b82f6);
+    color: #fff;
+    border-color: var(--primary-color, #3b82f6);
+    font-weight: 600;
+  }
+  .wall-btn.wall-center {
+    background: var(--secondary-background-color, #f0f0f0);
+    cursor: default;
+    font-size: 10px;
+    color: var(--secondary-text-color, #888);
+  }
+  .wall-btn.wall-center:hover {
+    background: var(--secondary-background-color, #f0f0f0);
+    color: var(--secondary-text-color, #888);
+    border-color: var(--divider-color, #e0e0e0);
+  }
 `;
 
 export class LD2450RadarCardEditor extends HTMLElement {
@@ -152,6 +206,25 @@ export class LD2450RadarCardEditor extends HTMLElement {
 
   private _render(): void {
     const c = this._config;
+    const currentPos = c.sensor_position ?? 'bottom';
+
+    // Wall grid mapping: [row][col] → SensorPosition | null
+    const wallGrid: Array<SensorPosition | null> = [
+      'top-left',    'top',    'top-right',
+      'left',        null,     'right',
+      'bottom-left', 'bottom', 'bottom-right',
+    ];
+
+    const wallGridHTML = wallGrid.map((pos) => {
+      if (pos === null) {
+        return `<div class="wall-btn wall-center">Room</div>`;
+      }
+      const info = SENSOR_POSITIONS.find(p => p.value === pos);
+      return `<button class="wall-btn ${currentPos === pos ? 'selected' : ''}"
+        data-wall-pos="${pos}" title="${info?.label ?? pos}" aria-label="${info?.label ?? pos}">
+        ${info?.icon ?? ''}
+      </button>`;
+    }).join('');
 
     this._shadow.innerHTML = `
       <style>${EDITOR_STYLES}</style>
@@ -180,6 +253,18 @@ export class LD2450RadarCardEditor extends HTMLElement {
         <div class="hint">
           Select any <em>Target X / Y / Speed</em> sensor from your LD2450
           device to auto-fill the Device Name above.
+        </div>
+      </div>
+
+      <div class="section-title">Sensor Mounting</div>
+
+      <div class="editor-row">
+        <label>Sensor Position</label>
+        <div class="hint" style="margin-top:0;margin-bottom:6px">
+          Click where the sensor is mounted on the wall. Corner positions are for sensors in room corners.
+        </div>
+        <div class="wall-grid" id="wall-grid">
+          ${wallGridHTML}
         </div>
       </div>
 
@@ -345,6 +430,15 @@ export class LD2450RadarCardEditor extends HTMLElement {
       const val = parseInt(trailLength.value, 10);
       if (trailLengthVal) trailLengthVal.textContent = `${val}`;
       this._fireConfigChanged({ trail_length: val });
+    });
+
+    // Wall position buttons
+    shadow.querySelectorAll('[data-wall-pos]').forEach(el => {
+      el.addEventListener('click', () => {
+        const pos = (el as HTMLElement).dataset['wallPos'] as SensorPosition;
+        this._fireConfigChanged({ sensor_position: pos });
+        this._render(); // re-render to update selected state
+      });
     });
   }
 

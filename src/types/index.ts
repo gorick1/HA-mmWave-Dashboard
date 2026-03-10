@@ -5,6 +5,35 @@ export interface Point {
   y: number;
 }
 
+/**
+ * Sensor mounting position.
+ * Wall positions: sensor centered on the chosen wall.
+ * Corner positions: sensor in the chosen corner.
+ */
+export type SensorPosition =
+  | 'bottom'
+  | 'top'
+  | 'left'
+  | 'right'
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'top-left'
+  | 'top-right';
+
+/**
+ * Pre-computed sensor layout values for coordinate transforms and rendering.
+ */
+export interface SensorLayout {
+  sx: number;           // sensor x position on canvas (px)
+  sy: number;           // sensor y position on canvas (px)
+  forwardX: number;     // forward direction x component (unit)
+  forwardY: number;     // forward direction y component (unit)
+  rightX: number;       // right direction x component (unit)
+  rightY: number;       // right direction y component (unit)
+  scale: number;        // pixels per mm
+  facingAngle: number;  // angle the sensor faces (canvas radians, 0=right, -π/2=up)
+}
+
 export interface TargetData {
   id: number;
   x: number;
@@ -63,6 +92,7 @@ export interface CardConfig {
   show_trails: boolean;
   trail_length: number;
   color_scheme?: 'dark' | 'light';
+  sensor_position: SensorPosition;
   targets: TargetConfig[];
   furniture: FurnitureConfig[];
   zones: ZoneConfig[];

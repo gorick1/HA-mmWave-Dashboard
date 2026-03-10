@@ -1,4 +1,4 @@
-import type { Point } from '../types/index.js';
+import type { Point, SensorPosition, SensorLayout } from '../types/index.js';
 
 /**
  * Ray-casting algorithm for point-in-polygon test.
@@ -28,10 +28,93 @@ export function distance(a: Point, b: Point): number {
 }
 
 /**
+ * Compute the sensor layout for a given position, canvas dimensions, and range.
+ *
+ * The sensor's local coordinate system:
+ *   Y+ = forward (away from sensor)
+ *   X+ = to the right of the sensor
+ *
+ * Returns pixel position, direction vectors, scale, and facing angle.
+ */
+export function getSensorLayout(
+  position: SensorPosition,
+  canvasWidth: number,
+  canvasHeight: number,
+  sensorMargin: number,
+  maxRangeMm: number
+): SensorLayout {
+  let sx: number, sy: number, facingAngle: number, usable: number;
+
+  switch (position) {
+    case 'top':
+      sx = canvasWidth / 2;
+      sy = sensorMargin;
+      facingAngle = Math.PI / 2; // down
+      usable = canvasHeight - sensorMargin;
+      break;
+    case 'left':
+      sx = sensorMargin;
+      sy = canvasHeight / 2;
+      facingAngle = 0; // right
+      usable = canvasWidth - sensorMargin;
+      break;
+    case 'right':
+      sx = canvasWidth - sensorMargin;
+      sy = canvasHeight / 2;
+      facingAngle = Math.PI; // left
+      usable = canvasWidth - sensorMargin;
+      break;
+    case 'bottom-left':
+      sx = sensorMargin;
+      sy = canvasHeight - sensorMargin;
+      facingAngle = -Math.PI / 4; // up-right 45°
+      usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+      break;
+    case 'bottom-right':
+      sx = canvasWidth - sensorMargin;
+      sy = canvasHeight - sensorMargin;
+      facingAngle = -3 * Math.PI / 4; // up-left 45°
+      usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+      break;
+    case 'top-left':
+      sx = sensorMargin;
+      sy = sensorMargin;
+      facingAngle = Math.PI / 4; // down-right 45°
+      usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+      break;
+    case 'top-right':
+      sx = canvasWidth - sensorMargin;
+      sy = sensorMargin;
+      facingAngle = 3 * Math.PI / 4; // down-left 45°
+      usable = Math.min(canvasWidth - sensorMargin, canvasHeight - sensorMargin);
+      break;
+    case 'bottom':
+    default:
+      sx = canvasWidth / 2;
+      sy = canvasHeight - sensorMargin;
+      facingAngle = -Math.PI / 2; // up
+      usable = canvasHeight - sensorMargin;
+      break;
+  }
+
+  const scale = usable / maxRangeMm;
+
+  // Forward direction (where sensor Y+ maps to on canvas)
+  const forwardX = Math.cos(facingAngle);
+  const forwardY = Math.sin(facingAngle);
+
+  // Right direction (where sensor X+ maps to on canvas) — perpendicular clockwise
+  const rightX = -Math.sin(facingAngle);
+  const rightY = Math.cos(facingAngle);
+
+  return { sx, sy, forwardX, forwardY, rightX, rightY, scale, facingAngle };
+}
+
+/**
  * Convert radar millimeter coordinates to canvas pixel coordinates.
- * The sensor sits at the bottom-center of the canvas.
- * X: negative = left, positive = right
- * Y: 0 at sensor, increases away (up on screen)
+ * The sensor position on the canvas depends on the sensor_position config.
+ * X: to the right of the sensor in its local frame
+ * Y: away from the sensor (forward) in its local frame
  */
 export function mmToCanvas(
   mmX: number,
@@ -39,15 +122,13 @@ export function mmToCanvas(
   canvasWidth: number,
   canvasHeight: number,
   maxRangeMm: number,
-  sensorMargin = 40
+  sensorMargin = 40,
+  sensorPosition: SensorPosition = 'bottom'
 ): Point {
-  const sensorX = canvasWidth / 2;
-  const sensorY = canvasHeight - sensorMargin;
-  const usableHeight = canvasHeight - sensorMargin;
-  const scale = usableHeight / maxRangeMm;
+  const layout = getSensorLayout(sensorPosition, canvasWidth, canvasHeight, sensorMargin, maxRangeMm);
   return {
-    x: sensorX + mmX * scale,
-    y: sensorY - mmY * scale,
+    x: layout.sx + (mmX * layout.rightX + mmY * layout.forwardX) * layout.scale,
+    y: layout.sy + (mmX * layout.rightY + mmY * layout.forwardY) * layout.scale,
   };
 }
 
@@ -60,23 +141,31 @@ export function canvasToMm(
   canvasWidth: number,
   canvasHeight: number,
   maxRangeMm: number,
-  sensorMargin = 40
+  sensorMargin = 40,
+  sensorPosition: SensorPosition = 'bottom'
 ): Point {
-  const sensorX = canvasWidth / 2;
-  const sensorY = canvasHeight - sensorMargin;
-  const usableHeight = canvasHeight - sensorMargin;
-  const scale = usableHeight / maxRangeMm;
+  const layout = getSensorLayout(sensorPosition, canvasWidth, canvasHeight, sensorMargin, maxRangeMm);
+  const dx = (px - layout.sx) / layout.scale;
+  const dy = (py - layout.sy) / layout.scale;
+  // Inverse of the orthogonal rotation matrix (transpose)
   return {
-    x: (px - sensorX) / scale,
-    y: (sensorY - py) / scale,
+    x: dx * layout.rightX + dy * layout.rightY,
+    y: dx * layout.forwardX + dy * layout.forwardY,
   };
 }
 
 /**
- * Get scale factor (pixels per mm) for current canvas size.
+ * Get scale factor (pixels per mm) for current canvas size and sensor position.
  */
-export function getScale(canvasHeight: number, maxRangeMm: number, sensorMargin = 40): number {
-  return (canvasHeight - sensorMargin) / maxRangeMm;
+export function getScale(
+  canvasHeight: number,
+  maxRangeMm: number,
+  sensorMargin = 40,
+  sensorPosition: SensorPosition = 'bottom',
+  canvasWidth = 0
+): number {
+  const layout = getSensorLayout(sensorPosition, canvasWidth, canvasHeight, sensorMargin, maxRangeMm);
+  return layout.scale;
 }
 
 /**
