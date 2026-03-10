@@ -4,7 +4,7 @@ import type { CardConfig, HomeAssistant, SensorPosition } from '../types/index.j
  * LD2450 Radar Card Editor
  *
  * Implements the Lovelace card editor interface so Home Assistant shows a
- * visual configuration panel (with an entity picker for device selection)
+ * visual configuration panel (with a device dropdown for easy selection)
  * instead of the raw YAML editor when the card is added or edited via the UI.
  *
  * HA calls:
@@ -14,6 +14,9 @@ import type { CardConfig, HomeAssistant, SensorPosition } from '../types/index.j
  * The editor fires a `config-changed` CustomEvent (bubbling, composed) whenever
  * the user changes a field. HA reads `event.detail.config` and updates the card.
  */
+
+/** Pattern that matches LD2450 target-axis entity IDs. */
+const LD2450_ENTITY_RE = /^sensor\.(.+?)_target_\d+_(?:x|y|speed|resolution)$/;
 
 const SENSOR_POSITIONS: Array<{ value: SensorPosition; label: string; icon: string }> = [
   { value: 'bottom',       label: 'Bottom Wall',     icon: '⬇' },
@@ -161,8 +164,6 @@ export class LD2450RadarCardEditor extends HTMLElement {
   private _config: Partial<CardConfig> = {};
   private _hass: HomeAssistant | null = null;
   private _shadow: ShadowRoot;
-  /** Tracks the entity chosen for auto-fill (stored separately so the picker retains its selection) */
-  private _pickedEntity = '';
 
   constructor() {
     super();
@@ -194,19 +195,37 @@ export class LD2450RadarCardEditor extends HTMLElement {
   }
 
   /**
-   * Try to extract the device_name prefix from a selected entity ID.
-   * Expected pattern: sensor.<device_name>_target_<n>_<x|y|speed|resolution>
-   * Non-greedy (.+?) ensures we stop at the first _target_N_axis suffix,
-   * which is the correct device name boundary for well-formed LD2450 entities.
+   * Scan hass.states for LD2450 devices by finding entities matching the
+   * sensor.<device>_target_N_(x|y|speed|resolution) pattern.
+   * Returns a deduplicated, sorted list of device name strings.
    */
-  private _extractDeviceName(entityId: string): string | null {
-    const match = entityId.match(/^sensor\.(.+?)_target_\d+_(?:x|y|speed|resolution)$/);
-    return match ? match[1] : null;
+  private _getAvailableDevices(): string[] {
+    if (!this._hass) return [];
+    const deviceSet = new Set<string>();
+    for (const entityId of Object.keys(this._hass.states)) {
+      const match = entityId.match(LD2450_ENTITY_RE);
+      if (match) deviceSet.add(match[1]);
+    }
+    return Array.from(deviceSet).sort();
   }
 
   private _render(): void {
     const c = this._config;
     const currentPos = c.sensor_position ?? 'bottom';
+
+    // Auto-discover LD2450 devices
+    const devices = this._getAvailableDevices();
+    const currentDevice = c.device_name ?? '';
+
+    // Build device dropdown options
+    const deviceOptionsHTML = devices.length > 0
+      ? [
+          `<option value="" ${!currentDevice ? 'selected' : ''}>— Select a device —</option>`,
+          ...devices.map(d =>
+            `<option value="${this._escapeAttr(d)}" ${currentDevice === d ? 'selected' : ''}>${this._escapeAttr(d)}</option>`
+          ),
+        ].join('')
+      : `<option value="">No LD2450 devices found</option>`;
 
     // Wall grid mapping: [row][col] → SensorPosition | null
     const wallGrid: Array<SensorPosition | null> = [
@@ -232,27 +251,30 @@ export class LD2450RadarCardEditor extends HTMLElement {
       <div class="section-title">Device</div>
 
       <div class="editor-row">
-        <label for="device-name">Device Name</label>
+        <label for="device-select">Device</label>
+        <select id="device-select" aria-label="Select LD2450 device">
+          ${deviceOptionsHTML}
+        </select>
+        <div class="hint">
+          ${devices.length > 0
+            ? 'Choose your LD2450 device. The card auto-discovers devices from your Home Assistant entities.'
+            : 'No LD2450 devices detected. Make sure your ESPHome device is online and its entities are available in HA.'}
+        </div>
+      </div>
+
+      <div class="editor-row">
+        <label for="device-name">Or enter device name manually</label>
         <input
           type="text"
           id="device-name"
           placeholder="e.g. living_room_radar"
-          value="${this._escapeAttr(c.device_name ?? '')}"
+          value="${this._escapeAttr(currentDevice)}"
           aria-label="ESPHome device name prefix"
         >
         <div class="hint">
           Must match your ESPHome <code>name:</code> field exactly.
           Entities are resolved as
           <code>sensor.&lt;device_name&gt;_target_1_x</code>, etc.
-        </div>
-      </div>
-
-      <div class="editor-row">
-        <label>Auto-detect from entity</label>
-        <div class="entity-picker-wrapper" id="entity-picker-mount"></div>
-        <div class="hint">
-          Select any <em>Target X / Y / Speed</em> sensor from your LD2450
-          device to auto-fill the Device Name above.
         </div>
       </div>
 
@@ -337,52 +359,25 @@ export class LD2450RadarCardEditor extends HTMLElement {
       </div>
     `;
 
-    this._mountEntityPicker();
     this._attachListeners();
-  }
-
-  /**
-   * Programmatically create an <ha-entity-picker> and mount it inside the
-   * shadow DOM. We must use JS property assignment (not HTML attributes)
-   * because `hass` is a JavaScript object property, not a serialisable attribute.
-   */
-  private _mountEntityPicker(): void {
-    const mount = this._shadow.getElementById('entity-picker-mount');
-    if (!mount || !this._hass) return;
-
-    // ha-entity-picker is registered by HA frontend at runtime
-    const picker = document.createElement('ha-entity-picker') as HTMLElement & {
-      hass: HomeAssistant;
-      value: string;
-      label: string;
-      includeDomains: string[];
-      allowCustomValue: boolean;
-    };
-
-    picker.hass = this._hass;
-    picker.value = this._pickedEntity;
-    picker.label = 'Pick a target sensor';
-    picker.includeDomains = ['sensor'];
-    picker.allowCustomValue = false;
-
-    picker.addEventListener('value-changed', (evt: Event) => {
-      const entityId: string = (evt as CustomEvent<{ value: string }>).detail.value ?? '';
-      this._pickedEntity = entityId;
-      const detected = this._extractDeviceName(entityId);
-      if (detected) {
-        this._fireConfigChanged({ device_name: detected });
-        // Sync the text input to show the auto-filled value
-        const input = this._shadow.getElementById('device-name') as HTMLInputElement | null;
-        if (input) input.value = detected;
-      }
-    });
-
-    mount.appendChild(picker);
   }
 
   private _attachListeners(): void {
     const shadow = this._shadow;
 
+    // Device dropdown
+    const deviceSelect = shadow.getElementById('device-select') as HTMLSelectElement | null;
+    deviceSelect?.addEventListener('change', () => {
+      const selected = deviceSelect.value;
+      if (selected) {
+        this._fireConfigChanged({ device_name: selected });
+        // Sync the text input to show the selected value
+        const input = shadow.getElementById('device-name') as HTMLInputElement | null;
+        if (input) input.value = selected;
+      }
+    });
+
+    // Manual device name input (fallback)
     const deviceNameInput = shadow.getElementById('device-name') as HTMLInputElement | null;
     deviceNameInput?.addEventListener('change', () => {
       this._fireConfigChanged({ device_name: deviceNameInput.value.trim() });

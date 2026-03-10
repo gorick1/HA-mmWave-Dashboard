@@ -118,6 +118,9 @@ export interface HassConnection {
     callback: (msg: unknown) => void,
     subscribeMessage: { type: string; entity_ids?: string[] }
   ) => Promise<() => void>;
+  sendMessageWithResult: (
+    message: { type: string; [key: string]: unknown }
+  ) => Promise<unknown>;
 }
 
 export interface EntityStateChangedMessage {
