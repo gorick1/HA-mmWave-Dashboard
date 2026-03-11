@@ -979,7 +979,10 @@ class TargetTracker {
             target.y = value !== null && value !== void 0 ? value : 0;
         else if (axis === 'speed')
             target.speed = value !== null && value !== void 0 ? value : 0;
-        // A target is inactive only when both X and Y are exactly 0 (LD2450 convention).
+        // A target is inactive when both X and Y are exactly 0 (LD2450 convention
+        // for "no target detected").  Negative Y values are behind the sensor and
+        // are also treated as inactive since the LD2450 only covers the forward
+        // hemisphere.
         const isActive = !(target.x === 0 && target.y === 0) &&
             target.y >= 0;
         if (isActive) {
@@ -2969,7 +2972,7 @@ class LD2450RadarCard extends HTMLElement {
         }
     }
     _updateFromHassStates(hass) {
-        var _a, _b;
+        var _a, _b, _c;
         const mappings = buildEntityIds(this._config.device_name, this._config.targets.map(t => t.id));
         let changed = false;
         for (const m of mappings) {
@@ -2982,11 +2985,18 @@ class LD2450RadarCard extends HTMLElement {
             const val = parseFloat(raw);
             if (isNaN(val))
                 continue;
-            (_a = this._tracker) === null || _a === void 0 ? void 0 : _a.updateAxis(m.targetId, m.axis, val);
-            changed = true;
+            // Only update and flag dirty when the value actually changed
+            const target = (_a = this._tracker) === null || _a === void 0 ? void 0 : _a.getTargets().find(t => t.id === m.targetId);
+            if (target) {
+                const current = m.axis === 'x' ? target.x : m.axis === 'y' ? target.y : target.speed;
+                if (current !== val) {
+                    (_b = this._tracker) === null || _b === void 0 ? void 0 : _b.updateAxis(m.targetId, m.axis, val);
+                    changed = true;
+                }
+            }
         }
         if (changed) {
-            (_b = this._radarCanvas) === null || _b === void 0 ? void 0 : _b.markDirty();
+            (_c = this._radarCanvas) === null || _c === void 0 ? void 0 : _c.markDirty();
         }
     }
     _unsubAll() {

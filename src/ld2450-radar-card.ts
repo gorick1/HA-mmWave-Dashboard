@@ -747,8 +747,15 @@ class LD2450RadarCard extends HTMLElement {
       if (raw === 'unavailable' || raw === 'unknown') continue;
       const val = parseFloat(raw);
       if (isNaN(val)) continue;
-      this._tracker?.updateAxis(m.targetId, m.axis, val);
-      changed = true;
+      // Only update and flag dirty when the value actually changed
+      const target = this._tracker?.getTargets().find(t => t.id === m.targetId);
+      if (target) {
+        const current = m.axis === 'x' ? target.x : m.axis === 'y' ? target.y : target.speed;
+        if (current !== val) {
+          this._tracker?.updateAxis(m.targetId, m.axis, val);
+          changed = true;
+        }
+      }
     }
     if (changed) {
       this._radarCanvas?.markDirty();

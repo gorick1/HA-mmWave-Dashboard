@@ -63,7 +63,10 @@ export class TargetTracker {
     else if (axis === 'y') target.y = value ?? 0;
     else if (axis === 'speed') target.speed = value ?? 0;
 
-    // A target is inactive only when both X and Y are exactly 0 (LD2450 convention).
+    // A target is inactive when both X and Y are exactly 0 (LD2450 convention
+    // for "no target detected").  Negative Y values are behind the sensor and
+    // are also treated as inactive since the LD2450 only covers the forward
+    // hemisphere.
     const isActive =
       !(target.x === 0 && target.y === 0) &&
       target.y >= 0;
