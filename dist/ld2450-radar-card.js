@@ -576,7 +576,13 @@ class RadarCanvas {
         const { ctx, canvas, config } = this;
         const w = canvas.width;
         const h = canvas.height;
-        ctx.clearRect(0, 0, w, h);
+        const light = this._isLight;
+        // Fill background explicitly so light/dark theme is visible on the canvas
+        // itself (ctx.clearRect alone leaves the canvas transparent and relies
+        // solely on the CSS wrapper background, which can be unreliable when the
+        // shadow-DOM host class is applied asynchronously).
+        ctx.fillStyle = light ? '#f0f4f8' : '#0a0e1a';
+        ctx.fillRect(0, 0, w, h);
         const layout = this._getLayout(w, h);
         if (config.show_grid)
             this._drawGrid(w, h, layout);
@@ -999,6 +1005,12 @@ class TargetTracker {
                     target.trail.shift();
                 }
             }
+        }
+        else {
+            // Coordinates explicitly report "no target" — deactivate immediately
+            // rather than waiting for the inactivity timeout.
+            target.active = false;
+            target.trail = [];
         }
         return true;
     }
@@ -2342,6 +2354,10 @@ class LD2450RadarCard extends HTMLElement {
         this._tickInterval = null;
         this._dragPlacingId = null;
         this._dragPlaceStartMm = null;
+        // Current canvas-coordinate mouse position while in draw-zone mode (for preview line)
+        this._drawMousePos = null;
+        // Index of the hovered drawing vertex (0 = first vertex, for close-polygon indicator)
+        this._drawHoveredVertex = null;
         this._shadow = this.attachShadow({ mode: 'open' });
     }
     // Called by HA to set the card config
@@ -2411,6 +2427,7 @@ class LD2450RadarCard extends HTMLElement {
         this._zoneEditor.setOnZoneComplete((zone) => {
             this._zoneNamePending = zone;
             this._renderDOM();
+            this._setupCanvas();
         });
         this._renderDOM();
         this._setupCanvas();
@@ -2734,18 +2751,26 @@ class LD2450RadarCard extends HTMLElement {
             this._radarCanvas.updateConfig(this._config);
         }
         this._radarCanvas.markDirty();
-        // Resize observer
+        this._attachCanvasListeners(canvas);
+        // Always reconnect the resize observer to the current wrapper element.
+        // After _renderDOM() the old wrapper is replaced, so we must re-observe
+        // the new one to keep canvas dimensions in sync with the displayed size.
+        // The callback dynamically looks up the current wrap so the same observer
+        // instance can be reused across DOM rebuilds.
         if (!this._resizeObserver) {
             this._resizeObserver = new ResizeObserver(() => {
                 var _a;
-                const r = wrap.getBoundingClientRect();
-                (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.resize(r.width, r.height);
-                canvas.width = r.width;
-                canvas.height = r.height;
+                const currentWrap = this._shadow.getElementById('canvas-wrap');
+                if (currentWrap) {
+                    const r = currentWrap.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.resize(r.width, r.height);
+                    }
+                }
             });
-            this._resizeObserver.observe(wrap);
         }
-        this._attachCanvasListeners(canvas);
+        this._resizeObserver.disconnect();
+        this._resizeObserver.observe(wrap);
     }
     _attachCanvasListeners(canvas) {
         var _a;
@@ -2758,8 +2783,16 @@ class LD2450RadarCard extends HTMLElement {
             const pos = this._getCanvasPos(newCanvas, e);
             const tooltip = this._shadow.getElementById('coord-tooltip');
             if (this._editMode === 'draw-zone' && this._zoneEditor) {
-                this._zoneEditor.isNearFirstVertex(pos.x, pos.y, newCanvas.width, newCanvas.height);
+                const hovered = this._zoneEditor.isNearFirstVertex(pos.x, pos.y, newCanvas.width, newCanvas.height);
+                // Track mouse position and first-vertex hover so the preview line and
+                // close-polygon indicator are rendered in the draw overlay.
+                this._drawMousePos = pos;
+                this._drawHoveredVertex = hovered ? 0 : null;
                 (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.markDirty();
+            }
+            else {
+                this._drawMousePos = null;
+                this._drawHoveredVertex = null;
             }
             if (mouseIsDown) {
                 if (this._editMode === 'add-furniture' && this._dragPlacingId && this._dragPlaceStartMm) {
@@ -2793,9 +2826,14 @@ class LD2450RadarCard extends HTMLElement {
             }
         });
         newCanvas.addEventListener('mouseleave', () => {
+            var _a;
             const tooltip = this._shadow.getElementById('coord-tooltip');
             if (tooltip)
                 tooltip.style.display = 'none';
+            // Clear drawing preview when mouse leaves canvas
+            this._drawMousePos = null;
+            this._drawHoveredVertex = null;
+            (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.markDirty();
         });
         newCanvas.addEventListener('mousedown', (e) => {
             var _a, _b, _c, _d, _f, _g, _h, _j;
@@ -2905,8 +2943,8 @@ class LD2450RadarCard extends HTMLElement {
             const drawingState = {
                 mode: this._editMode,
                 zoneVertices: (_m = (_l = this._zoneEditor) === null || _l === void 0 ? void 0 : _l.getDrawingVertices()) !== null && _m !== void 0 ? _m : [],
-                mousePos: null,
-                hoveredVertexIndex: null,
+                mousePos: this._drawMousePos,
+                hoveredVertexIndex: this._drawHoveredVertex,
             };
             this._radarCanvas.render(targets, zones, furniture, drawingState, null);
             // Draw furniture layer with handles
