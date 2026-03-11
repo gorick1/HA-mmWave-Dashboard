@@ -77,8 +77,14 @@ export class RadarCanvas {
     const { ctx, canvas, config } = this;
     const w = canvas.width;
     const h = canvas.height;
+    const light = this._isLight;
 
-    ctx.clearRect(0, 0, w, h);
+    // Fill background explicitly so light/dark theme is visible on the canvas
+    // itself (ctx.clearRect alone leaves the canvas transparent and relies
+    // solely on the CSS wrapper background, which can be unreliable when the
+    // shadow-DOM host class is applied asynchronously).
+    ctx.fillStyle = light ? '#f0f4f8' : '#0a0e1a';
+    ctx.fillRect(0, 0, w, h);
 
     const layout = this._getLayout(w, h);
 

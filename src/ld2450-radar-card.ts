@@ -66,6 +66,10 @@ class LD2450RadarCard extends HTMLElement {
   private _tickInterval: ReturnType<typeof setInterval> | null = null;
   private _dragPlacingId: string | null = null;
   private _dragPlaceStartMm: Point | null = null;
+  // Current canvas-coordinate mouse position while in draw-zone mode (for preview line)
+  private _drawMousePos: Point | null = null;
+  // Index of the hovered drawing vertex (0 = first vertex, for close-polygon indicator)
+  private _drawHoveredVertex: number | null = null;
 
   constructor() {
     super();
@@ -141,6 +145,7 @@ class LD2450RadarCard extends HTMLElement {
     this._zoneEditor.setOnZoneComplete((zone) => {
       this._zoneNamePending = zone;
       this._renderDOM();
+      this._setupCanvas();
     });
 
     this._renderDOM();
@@ -472,18 +477,26 @@ class LD2450RadarCard extends HTMLElement {
     }
     this._radarCanvas.markDirty();
 
-    // Resize observer
+    this._attachCanvasListeners(canvas);
+
+    // Always reconnect the resize observer to the current wrapper element.
+    // After _renderDOM() the old wrapper is replaced, so we must re-observe
+    // the new one to keep canvas dimensions in sync with the displayed size.
+    // The callback dynamically looks up the current wrap so the same observer
+    // instance can be reused across DOM rebuilds.
     if (!this._resizeObserver) {
       this._resizeObserver = new ResizeObserver(() => {
-        const r = wrap.getBoundingClientRect();
-        this._radarCanvas?.resize(r.width, r.height);
-        canvas.width = r.width;
-        canvas.height = r.height;
+        const currentWrap = this._shadow.getElementById('canvas-wrap');
+        if (currentWrap) {
+          const r = currentWrap.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            this._radarCanvas?.resize(r.width, r.height);
+          }
+        }
       });
-      this._resizeObserver.observe(wrap);
     }
-
-    this._attachCanvasListeners(canvas);
+    this._resizeObserver.disconnect();
+    this._resizeObserver.observe(wrap);
   }
 
   private _attachCanvasListeners(canvas: HTMLCanvasElement): void {
@@ -499,9 +512,14 @@ class LD2450RadarCard extends HTMLElement {
 
       if (this._editMode === 'draw-zone' && this._zoneEditor) {
         const hovered = this._zoneEditor.isNearFirstVertex(pos.x, pos.y, newCanvas.width, newCanvas.height);
+        // Track mouse position and first-vertex hover so the preview line and
+        // close-polygon indicator are rendered in the draw overlay.
+        this._drawMousePos = pos;
+        this._drawHoveredVertex = hovered ? 0 : null;
         this._radarCanvas?.markDirty();
-        // Update mouse pos for drawing overlay
-        void hovered;
+      } else {
+        this._drawMousePos = null;
+        this._drawHoveredVertex = null;
       }
 
       if (mouseIsDown) {
@@ -539,6 +557,10 @@ class LD2450RadarCard extends HTMLElement {
     newCanvas.addEventListener('mouseleave', () => {
       const tooltip = this._shadow.getElementById('coord-tooltip');
       if (tooltip) tooltip.style.display = 'none';
+      // Clear drawing preview when mouse leaves canvas
+      this._drawMousePos = null;
+      this._drawHoveredVertex = null;
+      this._radarCanvas?.markDirty();
     });
 
     newCanvas.addEventListener('mousedown', (e: MouseEvent) => {
@@ -655,8 +677,8 @@ class LD2450RadarCard extends HTMLElement {
       const drawingState = {
         mode: this._editMode,
         zoneVertices: this._zoneEditor?.getDrawingVertices() ?? [],
-        mousePos: null,
-        hoveredVertexIndex: null,
+        mousePos: this._drawMousePos,
+        hoveredVertexIndex: this._drawHoveredVertex,
       };
 
       this._radarCanvas.render(targets, zones, furniture, drawingState, null);

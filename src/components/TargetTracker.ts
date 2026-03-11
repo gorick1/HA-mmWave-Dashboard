@@ -87,6 +87,11 @@ export class TargetTracker {
           target.trail.shift();
         }
       }
+    } else {
+      // Coordinates explicitly report "no target" — deactivate immediately
+      // rather than waiting for the inactivity timeout.
+      target.active = false;
+      target.trail = [];
     }
 
     return true;
