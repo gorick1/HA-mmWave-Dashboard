@@ -2,7 +2,6 @@ import type { TargetData, CardConfig, Point } from '../types/index.js';
 import { pointInPolygon } from '../utils/geometry.js';
 
 const INACTIVE_TIMEOUT_MS = 2000;
-const DEAD_ZONE_MM = 50; // target ignored if within 50mm of origin
 const TRAIL_CHANGE_THRESHOLD_MM = 20;
 
 /**
@@ -64,8 +63,12 @@ export class TargetTracker {
     else if (axis === 'y') target.y = value ?? 0;
     else if (axis === 'speed') target.speed = value ?? 0;
 
+    // A target is inactive when both X and Y are exactly 0 (LD2450 convention
+    // for "no target detected").  Negative Y values are behind the sensor and
+    // are also treated as inactive since the LD2450 only covers the forward
+    // hemisphere.
     const isActive =
-      (Math.abs(target.x) > DEAD_ZONE_MM || Math.abs(target.y) > DEAD_ZONE_MM) &&
+      !(target.x === 0 && target.y === 0) &&
       target.y >= 0;
 
     if (isActive) {

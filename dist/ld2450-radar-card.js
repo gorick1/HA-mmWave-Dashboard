@@ -922,7 +922,6 @@ function hexToRgba(hex, alpha) {
 }
 
 const INACTIVE_TIMEOUT_MS = 2000;
-const DEAD_ZONE_MM = 50; // target ignored if within 50mm of origin
 const TRAIL_CHANGE_THRESHOLD_MM = 20;
 /**
  * TargetTracker manages live target state including trail buffers and
@@ -980,7 +979,11 @@ class TargetTracker {
             target.y = value !== null && value !== void 0 ? value : 0;
         else if (axis === 'speed')
             target.speed = value !== null && value !== void 0 ? value : 0;
-        const isActive = (Math.abs(target.x) > DEAD_ZONE_MM || Math.abs(target.y) > DEAD_ZONE_MM) &&
+        // A target is inactive when both X and Y are exactly 0 (LD2450 convention
+        // for "no target detected").  Negative Y values are behind the sensor and
+        // are also treated as inactive since the LD2450 only covers the forward
+        // hemisphere.
+        const isActive = !(target.x === 0 && target.y === 0) &&
             target.y >= 0;
         if (isActive) {
             const prevPos = target.trail.length > 0 ? target.trail[target.trail.length - 1] : null;
@@ -2227,38 +2230,44 @@ class LD2450RadarCardEditor extends HTMLElement {
  */
 async function subscribeEntities(hass, entityIds, callback) {
     const unsubscribes = await Promise.all(entityIds.map(entityId => hass.connection.subscribeMessage((msg) => {
-        var _a, _b, _c, _d;
+        var _a, _b, _c, _d, _e, _f, _g;
         const message = msg;
-        // Handle subscribe_entities response format
-        if (message.type === 'event') {
-            const data = (_a = message.event) === null || _a === void 0 ? void 0 : _a.data;
-            if (data && data.entity_id === entityId) {
-                callback(entityId, (_b = data.new_state) !== null && _b !== void 0 ? _b : null);
+        // subscribe_entities returns compressed messages:
+        //   Initial snapshot: { a: { entity_id: { s: state, a: attrs, ... } } }
+        //   State changes:    { c: { entity_id: { "+": { s: state, ... } } } }
+        // Handle initial state snapshot ("a" = added entities)
+        const added = message.a;
+        if (added && added[entityId]) {
+            const item = added[entityId];
+            callback(entityId, {
+                state: (_a = item.s) !== null && _a !== void 0 ? _a : 'unknown',
+                attributes: (_b = item.a) !== null && _b !== void 0 ? _b : {},
+            });
+        }
+        // Handle state changes ("c" = changed entities)
+        const changed = message.c;
+        if (changed && changed[entityId]) {
+            const delta = changed[entityId];
+            // The delta contains "+" (new keys) or keys whose values changed
+            const update = (_c = delta['+']) !== null && _c !== void 0 ? _c : delta;
+            if (update && typeof update === 'object' && 's' in update) {
+                const u = update;
+                callback(entityId, {
+                    state: (_d = u.s) !== null && _d !== void 0 ? _d : 'unknown',
+                    attributes: (_e = u.a) !== null && _e !== void 0 ? _e : {},
+                });
             }
         }
-        else if (message.type === 'result') {
-            // Initial state batch — look for entity in the result
-            const items = message;
-            if (items.a && items.a[entityId]) {
-                const item = items.a[entityId];
-                callback(entityId, {
-                    state: (_c = item.s) !== null && _c !== void 0 ? _c : 'unknown',
-                    attributes: (_d = item.a) !== null && _d !== void 0 ? _d : {},
-                });
+        // Also handle legacy state_changed event format for compatibility
+        const legacy = message;
+        if (legacy.type === 'event') {
+            const data = (_f = legacy.event) === null || _f === void 0 ? void 0 : _f.data;
+            if (data && data.entity_id === entityId) {
+                callback(entityId, (_g = data.new_state) !== null && _g !== void 0 ? _g : null);
             }
         }
     }, { type: 'subscribe_entities', entity_ids: [entityId] })));
     return unsubscribes;
-}
-/**
- * Get the numeric float value of a HA entity state, or null if unavailable.
- */
-function getNumericState(hass, entityId) {
-    const entity = hass.states[entityId];
-    if (!entity)
-        return null;
-    const val = parseFloat(entity.state);
-    return isNaN(val) ? null : val;
 }
 /**
  * Build the list of entity IDs for a given device name and target IDs.
@@ -2352,12 +2361,14 @@ class LD2450RadarCard extends HTMLElement {
     set hass(hass) {
         const firstSet = !this._hass;
         this._hass = hass;
-        if (firstSet && this._tracker) {
-            // Load initial states from hass.states
-            this._loadInitialStates();
-        }
         if (firstSet && this._unsubscribes.length === 0) {
             void this._subscribeEntities();
+        }
+        // Always read entity states from hass.states so the card stays in sync.
+        // HA calls set hass() whenever any entity changes; we check whether
+        // our radar entities actually changed before marking dirty.
+        if (this._tracker) {
+            this._updateFromHassStates(hass);
         }
     }
     connectedCallback() {
@@ -2960,16 +2971,32 @@ class LD2450RadarCard extends HTMLElement {
             console.warn('[LD2450RadarCard] Could not subscribe to entities:', err);
         }
     }
-    _loadInitialStates() {
-        var _a;
-        if (!this._hass)
-            return;
+    _updateFromHassStates(hass) {
+        var _a, _b, _c;
         const mappings = buildEntityIds(this._config.device_name, this._config.targets.map(t => t.id));
+        let changed = false;
         for (const m of mappings) {
-            const val = getNumericState(this._hass, m.entityId);
-            if (val !== null) {
-                (_a = this._tracker) === null || _a === void 0 ? void 0 : _a.updateAxis(m.targetId, m.axis, val);
+            const entity = hass.states[m.entityId];
+            if (!entity)
+                continue;
+            const raw = entity.state;
+            if (raw === 'unavailable' || raw === 'unknown')
+                continue;
+            const val = parseFloat(raw);
+            if (isNaN(val))
+                continue;
+            // Only update and flag dirty when the value actually changed
+            const target = (_a = this._tracker) === null || _a === void 0 ? void 0 : _a.getTargets().find(t => t.id === m.targetId);
+            if (target) {
+                const current = m.axis === 'x' ? target.x : m.axis === 'y' ? target.y : target.speed;
+                if (current !== val) {
+                    (_b = this._tracker) === null || _b === void 0 ? void 0 : _b.updateAxis(m.targetId, m.axis, val);
+                    changed = true;
+                }
             }
+        }
+        if (changed) {
+            (_c = this._radarCanvas) === null || _c === void 0 ? void 0 : _c.markDirty();
         }
     }
     _unsubAll() {
