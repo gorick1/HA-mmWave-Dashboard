@@ -13,7 +13,43 @@ export async function subscribeEntities(
     entityIds.map(entityId =>
       hass.connection.subscribeMessage(
         (msg: unknown) => {
-          const message = msg as {
+          const message = msg as Record<string, unknown>;
+
+          // subscribe_entities returns compressed messages:
+          //   Initial snapshot: { a: { entity_id: { s: state, a: attrs, ... } } }
+          //   State changes:    { c: { entity_id: { "+": { s: state, ... } } } }
+
+          // Handle initial state snapshot ("a" = added entities)
+          const added = message.a as
+            | Record<string, { s?: string; a?: Record<string, unknown> }>
+            | undefined;
+          if (added && added[entityId]) {
+            const item = added[entityId];
+            callback(entityId, {
+              state: item.s ?? 'unknown',
+              attributes: item.a ?? {},
+            });
+          }
+
+          // Handle state changes ("c" = changed entities)
+          const changed = message.c as
+            | Record<string, Record<string, { s?: string; a?: Record<string, unknown> }>>
+            | undefined;
+          if (changed && changed[entityId]) {
+            const delta = changed[entityId];
+            // The delta contains "+" (new keys) or keys whose values changed
+            const update = delta['+'] ?? delta;
+            if (update && typeof update === 'object' && 's' in update) {
+              const u = update as { s?: string; a?: Record<string, unknown> };
+              callback(entityId, {
+                state: u.s ?? 'unknown',
+                attributes: u.a ?? {},
+              });
+            }
+          }
+
+          // Also handle legacy state_changed event format for compatibility
+          const legacy = message as {
             type?: string;
             event?: {
               data?: {
@@ -21,25 +57,11 @@ export async function subscribeEntities(
                 new_state?: { state: string; attributes: Record<string, unknown> } | null;
               };
             };
-            [key: string]: unknown;
           };
-          // Handle subscribe_entities response format
-          if (message.type === 'event') {
-            const data = message.event?.data;
+          if (legacy.type === 'event') {
+            const data = legacy.event?.data;
             if (data && data.entity_id === entityId) {
               callback(entityId, data.new_state ?? null);
-            }
-          } else if (message.type === 'result') {
-            // Initial state batch — look for entity in the result
-            const items = message as unknown as {
-              a?: Record<string, { s?: string; a?: Record<string, unknown> }>;
-            };
-            if (items.a && items.a[entityId]) {
-              const item = items.a[entityId];
-              callback(entityId, {
-                state: item.s ?? 'unknown',
-                attributes: item.a ?? {},
-              });
             }
           }
         },

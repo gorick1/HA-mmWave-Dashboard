@@ -13,7 +13,7 @@ import { FurnitureLayer } from './components/FurnitureLayer.js';
 import { ZoneEditor } from './components/ZoneEditor.js';
 import { ConfigEditor, generateZoneYaml } from './components/ConfigEditor.js';
 import { LD2450RadarCardEditor } from './components/CardEditor.js';
-import { buildEntityIds, subscribeEntities, getNumericState } from './utils/ha-websocket.js';
+import { buildEntityIds, subscribeEntities } from './utils/ha-websocket.js';
 import { canvasToMm } from './utils/geometry.js';
 // @ts-expect-error CSS import via rollup-plugin-string
 import cardCss from './styles/card.css';
@@ -88,12 +88,14 @@ class LD2450RadarCard extends HTMLElement {
   set hass(hass: HomeAssistant) {
     const firstSet = !this._hass;
     this._hass = hass;
-    if (firstSet && this._tracker) {
-      // Load initial states from hass.states
-      this._loadInitialStates();
-    }
     if (firstSet && this._unsubscribes.length === 0) {
       void this._subscribeEntities();
+    }
+    // Always read entity states from hass.states so the card stays in sync.
+    // HA calls set hass() whenever any entity changes; we check whether
+    // our radar entities actually changed before marking dirty.
+    if (this._tracker) {
+      this._updateFromHassStates(hass);
     }
   }
 
@@ -732,17 +734,24 @@ class LD2450RadarCard extends HTMLElement {
     }
   }
 
-  private _loadInitialStates(): void {
-    if (!this._hass) return;
+  private _updateFromHassStates(hass: HomeAssistant): void {
     const mappings = buildEntityIds(
       this._config.device_name,
       this._config.targets.map(t => t.id)
     );
+    let changed = false;
     for (const m of mappings) {
-      const val = getNumericState(this._hass, m.entityId);
-      if (val !== null) {
-        this._tracker?.updateAxis(m.targetId, m.axis, val);
-      }
+      const entity = hass.states[m.entityId];
+      if (!entity) continue;
+      const raw = entity.state;
+      if (raw === 'unavailable' || raw === 'unknown') continue;
+      const val = parseFloat(raw);
+      if (isNaN(val)) continue;
+      this._tracker?.updateAxis(m.targetId, m.axis, val);
+      changed = true;
+    }
+    if (changed) {
+      this._radarCanvas?.markDirty();
     }
   }
 
