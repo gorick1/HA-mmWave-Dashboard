@@ -11,7 +11,7 @@ import { RadarCanvas } from './components/RadarCanvas.js';
 import { TargetTracker } from './components/TargetTracker.js';
 import { FurnitureLayer } from './components/FurnitureLayer.js';
 import { ZoneEditor } from './components/ZoneEditor.js';
-import { ConfigEditor, generateZoneYaml } from './components/ConfigEditor.js';
+import { ConfigEditor } from './components/ConfigEditor.js';
 import { LD2450RadarCardEditor } from './components/CardEditor.js';
 import { buildEntityIds, subscribeEntities } from './utils/ha-websocket.js';
 import { canvasToMm } from './utils/geometry.js';
@@ -57,7 +57,6 @@ class LD2450RadarCard extends HTMLElement {
   private _resizeObserver: ResizeObserver | null = null;
   private _editMode: EditMode = 'none';
   private _showSettings = false;
-  private _showYaml = false;
   private _selectedFurnitureType: string | null = null;
   private _isEditMode = false;
   private _history: HistoryEntry[] = [];
@@ -85,6 +84,22 @@ class LD2450RadarCard extends HTMLElement {
     }
     if (!this._config.furniture) this._config.furniture = [];
     if (!this._config.zones) this._config.zones = [];
+
+    // Restore persisted state (zones, furniture, settings) from localStorage
+    const stored = this._loadPersistedConfig();
+    if (stored) {
+      if (stored.zones && stored.zones.length) this._config.zones = stored.zones;
+      if (stored.furniture && stored.furniture.length) this._config.furniture = stored.furniture;
+      if (stored.color_scheme !== undefined) this._config.color_scheme = stored.color_scheme;
+      if (stored.sensor_position !== undefined) this._config.sensor_position = stored.sensor_position;
+      if (stored.max_range !== undefined) this._config.max_range = stored.max_range;
+      if (stored.fov_angle !== undefined) this._config.fov_angle = stored.fov_angle;
+      if (stored.show_grid !== undefined) this._config.show_grid = stored.show_grid;
+      if (stored.show_sweep !== undefined) this._config.show_sweep = stored.show_sweep;
+      if (stored.show_trails !== undefined) this._config.show_trails = stored.show_trails;
+      if (stored.trail_length !== undefined) this._config.trail_length = stored.trail_length;
+    }
+
     this._applyColorScheme();
     this._init();
   }
@@ -132,6 +147,7 @@ class LD2450RadarCard extends HTMLElement {
     this._applyColorScheme();
     this._radarCanvas?.updateConfig(this._config);
     this._radarCanvas?.markDirty();
+    this._persistConfig();
     this._renderDOM();
     this._setupCanvas();
   }
@@ -169,7 +185,6 @@ class LD2450RadarCard extends HTMLElement {
             <div class="tooltip" id="coord-tooltip" style="display:none"></div>
             ${this._zoneNamePending ? this._renderZoneNameDialog() : ''}
             ${this._showSettings ? this._renderSettingsPanel() : ''}
-            ${this._showYaml ? this._renderYamlPanel() : ''}
           </div>
           ${this._renderStatusBar()}
         </div>
@@ -216,12 +231,15 @@ class LD2450RadarCard extends HTMLElement {
         </div>
         <div class="toolbar-separator"></div>
         <div class="toolbar-group">
+          <button class="icon-btn" id="btn-delete" aria-label="Delete selected" title="Delete selected zone or furniture">🗑️ Delete</button>
+        </div>
+        <div class="toolbar-separator"></div>
+        <div class="toolbar-group">
           <button class="icon-btn" id="btn-undo" aria-label="Undo" ${this._historyIndex <= 0 ? 'disabled' : ''}>↩</button>
           <button class="icon-btn" id="btn-redo" aria-label="Redo" ${this._historyIndex >= this._history.length - 1 ? 'disabled' : ''}>↪</button>
         </div>
         <div class="toolbar-separator"></div>
         <div class="toolbar-group">
-          <button class="icon-btn" id="btn-export-yaml" aria-label="Export zone YAML">📋 YAML</button>
           <button class="icon-btn" id="btn-save" aria-label="Save">💾 Save</button>
         </div>
       </div>
@@ -263,22 +281,6 @@ class LD2450RadarCard extends HTMLElement {
         </div>
         <div class="settings-body" id="settings-body">
           ${this._configEditor?.renderHTML() ?? ''}
-        </div>
-      </div>
-    `;
-  }
-
-  private _renderYamlPanel(): string {
-    const yaml = generateZoneYaml(this._config);
-    return `
-      <div class="yaml-overlay" id="yaml-panel">
-        <div class="yaml-header">
-          <h3>Zone Template YAML</h3>
-          <button class="icon-btn" id="btn-close-yaml" aria-label="Close YAML export">✕</button>
-        </div>
-        <div class="yaml-block">
-          <button class="copy-btn" id="btn-copy-yaml" aria-label="Copy YAML">Copy</button>
-          <pre class="yaml-code" id="yaml-content">${this._escapeHtml(yaml)}</pre>
         </div>
       </div>
     `;
@@ -326,26 +328,13 @@ class LD2450RadarCard extends HTMLElement {
       this._setupCanvas();
     });
 
-    $('btn-close-yaml')?.addEventListener('click', () => {
-      this._showYaml = false;
-      this._renderDOM();
-      this._setupCanvas();
-    });
-
-    $('btn-copy-yaml')?.addEventListener('click', () => {
-      const pre = $('yaml-content');
-      if (pre) void navigator.clipboard.writeText(pre.textContent ?? '');
-    });
-
-    $('btn-export-yaml')?.addEventListener('click', () => {
-      this._showYaml = true;
-      this._renderDOM();
-      this._setupCanvas();
-    });
-
     $('btn-undo')?.addEventListener('click', () => this._undo());
     $('btn-redo')?.addEventListener('click', () => this._redo());
     $('btn-save')?.addEventListener('click', () => void this._save());
+
+    $('btn-delete')?.addEventListener('click', () => {
+      this._deleteSelected();
+    });
 
     // Edit mode toolbar buttons
     this._shadow.querySelectorAll('[data-mode]').forEach(el => {
@@ -402,6 +391,7 @@ class LD2450RadarCard extends HTMLElement {
       this._zoneNamePending = null;
       this._config.zones = this._zoneEditor?.getZoneConfigs() ?? [];
       this._pushHistory();
+      this._persistConfig();
       this._dispatchZoneChange(zone.id, false);
     }
     this._editMode = 'select';
@@ -537,6 +527,7 @@ class LD2450RadarCard extends HTMLElement {
           this._editMode = 'select';
         }
         this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
+        this._persistConfig();
         this._radarCanvas?.markDirty();
         // Re-render toolbar to reflect mode change
         this._renderDOM();
@@ -558,6 +549,7 @@ class LD2450RadarCard extends HTMLElement {
       this._zoneEditor?.onMouseUp();
       this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
       this._config.zones = this._zoneEditor?.getZoneConfigs() ?? [];
+      this._persistConfig();
     });
 
     newCanvas.addEventListener('dblclick', (e: MouseEvent) => {
@@ -574,10 +566,7 @@ class LD2450RadarCard extends HTMLElement {
         if (closed) this._radarCanvas?.markDirty();
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && this._editMode === 'select') {
-        this._pushHistory();
-        this._furnitureLayer?.deleteSelected();
-        this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
-        this._radarCanvas?.markDirty();
+        this._deleteSelected();
       }
     });
     newCanvas.setAttribute('tabindex', '0');
@@ -777,6 +766,7 @@ class LD2450RadarCard extends HTMLElement {
     this._furnitureLayer?.updateConfig(this._config);
     this._configEditor?.updateConfig(this._config);
     this._radarCanvas?.markDirty();
+    this._persistConfig();
   }
 
   private _pushHistory(): void {
@@ -806,12 +796,16 @@ class LD2450RadarCard extends HTMLElement {
     this._config.zones = entry.zones;
     this._furnitureLayer?.updateConfig(this._config);
     this._zoneEditor?.updateConfig(this._config);
+    this._persistConfig();
     this._renderDOM();
     this._setupCanvas();
   }
 
   private async _save(): Promise<void> {
     if (!this._hass) return;
+
+    // Persist config to localStorage
+    this._persistConfig();
 
     // For each zone, create an input_boolean helper (if it doesn't already exist)
     // so automations can trigger on zone occupancy changes.
@@ -830,7 +824,7 @@ class LD2450RadarCard extends HTMLElement {
       }
     }
 
-    console.info('[LD2450RadarCard] Zones saved — input_boolean helpers are ready for automations');
+    console.info('[LD2450RadarCard] Configuration saved — zones persisted and input_boolean helpers are ready for automations');
   }
 
   /**
@@ -866,6 +860,68 @@ class LD2450RadarCard extends HTMLElement {
         });
       }
     }
+  }
+
+  /**
+   * Delete the currently selected zone or furniture item.
+   */
+  private _deleteSelected(): void {
+    this._pushHistory();
+    const selectedZone = this._zoneEditor?.getSelectedZoneId();
+    if (selectedZone) {
+      this._zoneEditor?.deleteZone(selectedZone);
+      this._config.zones = this._zoneEditor?.getZoneConfigs() ?? [];
+    }
+    this._furnitureLayer?.deleteSelected();
+    this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
+    this._persistConfig();
+    this._radarCanvas?.markDirty();
+    this._renderDOM();
+    this._setupCanvas();
+  }
+
+  /**
+   * localStorage key for persisting card config, scoped by device name.
+   */
+  private _storageKey(): string {
+    return `ld2450_card_${this._config.device_name}`;
+  }
+
+  /**
+   * Persist the current card configuration to localStorage so that
+   * zones, furniture, and settings survive page refreshes.
+   */
+  private _persistConfig(): void {
+    try {
+      const toStore: Partial<CardConfig> = {
+        zones: this._config.zones,
+        furniture: this._config.furniture,
+        color_scheme: this._config.color_scheme,
+        sensor_position: this._config.sensor_position,
+        max_range: this._config.max_range,
+        fov_angle: this._config.fov_angle,
+        show_grid: this._config.show_grid,
+        show_sweep: this._config.show_sweep,
+        show_trails: this._config.show_trails,
+        trail_length: this._config.trail_length,
+      };
+      localStorage.setItem(this._storageKey(), JSON.stringify(toStore));
+    } catch (_e) {
+      // localStorage may be full or unavailable — not fatal
+    }
+  }
+
+  /**
+   * Load previously persisted card config from localStorage.
+   */
+  private _loadPersistedConfig(): Partial<CardConfig> | null {
+    try {
+      const raw = localStorage.getItem(this._storageKey());
+      if (raw) return JSON.parse(raw) as Partial<CardConfig>;
+    } catch (_e) {
+      // ignore parse errors
+    }
+    return null;
   }
 
   private _escapeHtml(str: string): string {

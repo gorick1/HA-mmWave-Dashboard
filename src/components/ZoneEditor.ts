@@ -163,6 +163,10 @@ export class ZoneEditor {
     if (this.selectedZoneId === zoneId) this.selectedZoneId = null;
   }
 
+  getSelectedZoneId(): string | null {
+    return this.selectedZoneId;
+  }
+
   /**
    * Handle mouse down in select mode.
    * Returns true if the event was consumed.

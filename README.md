@@ -19,13 +19,14 @@ A real-time radar visualization card for **Home Assistant**, designed for the **
 
 - 🎯 **Real-time target tracking** — up to 3 simultaneous targets with live X / Y / speed
 - 📐 **Zone editor** — draw polygon zones directly on the canvas; zones highlight when occupied
+- 🗑️ **Zone deletion** — select a zone and press Delete / Backspace, or click the 🗑️ Delete button
 - 🔌 **Direct zone integration** — zones are saved as `input_boolean` helpers and auto-toggled on occupancy changes — use them in automations immediately
+- 💾 **Persistent configuration** — zones, furniture, and settings are automatically saved and restored across page refreshes
 - 🎛️ **Device dropdown** — auto-discovers LD2450 devices from your HA entities; no manual typing needed
 - 🛋️ **Furniture layer** — place, move, resize, and rotate room furniture on the radar map
 - 🌀 **Animated radar sweep** — rotating sweep with decaying luminance trail
 - 🔦 **Motion trails** — fading position history per target
 - 📡 **WebSocket updates** — real-time state via HA's native WebSocket API
-- 📋 **YAML export** — optional export of `template binary_sensor` YAML for advanced setups
 - 🎨 **Dark & light themes** — glassmorphism design with CSS-variable theming
 - 📱 **Responsive** — works on mobile dashboards
 - ♿ **Accessible** — ARIA labels on all controls
@@ -92,11 +93,14 @@ When you add or edit the card, the **visual editor** opens automatically.
 
 Click **💾 Save** in the edit toolbar. The card will:
 
+- **Persist** all zones, furniture, and settings so they survive page refreshes and navigation
 - Create an `input_boolean` helper for each zone, named with the device and zone context
   (e.g. device `living_room_radar` + zone id `zone_entry` → `input_boolean.radar_living_room_radar_zone_entry`)
 - Automatically toggle helpers **on/off** as targets enter or leave zones
 
 These helpers work like any other HA entity — use them directly in automations, scripts, or conditions.
+
+> 💡 Configuration is also auto-saved whenever you make changes (draw zones, place furniture, adjust settings). The Save button additionally creates the `input_boolean` helpers in Home Assistant for automation use.
 
 ### Example Automation
 
@@ -123,15 +127,45 @@ automation:
 - **Move**: drag the zone body
 - **Reshape**: drag any vertex handle
 - **Add vertex**: double-click a zone edge
-- **Delete**: select a zone and press **Delete / Backspace**
+- **Delete**: select a zone and press **Delete / Backspace**, or click the **🗑️ Delete** button in the toolbar
 
-### YAML Export (Advanced)
+---
 
-For users who prefer HA template sensors with point-in-polygon math:
+## ESPHome Zone Configuration
 
-1. Click **📋 Export YAML** in the sidebar
-2. Copy the generated YAML into `configuration.yaml` (or a `templates.yaml` include)
-3. Restart Home Assistant to load the template sensors
+The card handles zone detection while it is open in the browser. For **autonomous zone detection** (zones that work even when the dashboard is closed), you can configure zones directly in your ESPHome YAML. Use the zone coordinates shown in the card to set up ESPHome zones:
+
+```yaml
+ld2450:
+  id: ld2450_sensor
+  zones:
+    - zone:
+      name: "Entry Zone"
+      polygon:
+        - x: -500
+          y: 500
+        - x: 500
+          y: 500
+        - x: 500
+          y: 1500
+        - x: -500
+          y: 1500
+    - zone:
+      name: "Desk Zone"
+      polygon:
+        - x: -1000
+          y: 2000
+        - x: 0
+          y: 2000
+        - x: 0
+          y: 3000
+        - x: -1000
+          y: 3000
+```
+
+> 💡 **How to get zone coordinates**: While drawing zones in the card, the tooltip shows X/Y coordinates in millimeters. Use these values in your ESPHome zone polygon configuration. After updating your ESPHome YAML, flash the device to apply the changes.
+
+> ⚠️ ESPHome zone configuration requires reflashing the ESP device. The card's `input_boolean` helpers provide a no-reflash alternative that works whenever the dashboard tab is open.
 
 ---
 
@@ -360,7 +394,7 @@ src/
 │   ├── FurnitureLayer.ts       # Furniture placement
 │   ├── ZoneEditor.ts           # Zone drawing & editing
 │   ├── TargetTracker.ts        # Target state management
-│   ├── ConfigEditor.ts         # Settings panel + YAML generator
+│   ├── ConfigEditor.ts         # Settings panel
 │   └── CardEditor.ts           # Visual card editor (device dropdown)
 ├── types/
 │   └── index.ts                # TypeScript interfaces
