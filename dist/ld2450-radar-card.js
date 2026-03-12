@@ -2304,7 +2304,7 @@ function buildEntityIds(deviceName, targetIds) {
     return result;
 }
 
-var cardCss = ":host {\n  display: block;\n  font-family: 'Inter', system-ui, -apple-system, sans-serif;\n  --radar-bg: #0a0e1a;\n  --radar-grid: rgba(99, 179, 237, 0.08);\n  --radar-sweep: rgba(99, 179, 237, 0.15);\n  --radar-fov: rgba(56, 189, 248, 0.06);\n  --radar-fov-border: rgba(56, 189, 248, 0.4);\n  --target-primary: #38bdf8;\n  --target-trail: rgba(56, 189, 248, 0.3);\n  --zone-fill: rgba(139, 92, 246, 0.15);\n  --zone-border: rgba(139, 92, 246, 0.7);\n  --zone-active: rgba(167, 139, 250, 0.3);\n  --furniture-fill: rgba(148, 163, 184, 0.12);\n  --furniture-border: rgba(148, 163, 184, 0.5);\n  --glass-surface: rgba(15, 23, 42, 0.8);\n  --glass-border: rgba(99, 179, 237, 0.12);\n  --text-primary: #e2e8f0;\n  --text-muted: rgba(148, 163, 184, 0.7);\n}\n\n/* Light color scheme */\n:host(.light-scheme) {\n  --radar-bg: #f0f4f8;\n  --radar-grid: rgba(59, 130, 246, 0.1);\n  --radar-sweep: rgba(59, 130, 246, 0.12);\n  --radar-fov: rgba(14, 165, 233, 0.07);\n  --radar-fov-border: rgba(14, 165, 233, 0.5);\n  --target-primary: #0284c7;\n  --target-trail: rgba(2, 132, 199, 0.3);\n  --zone-fill: rgba(109, 40, 217, 0.1);\n  --zone-border: rgba(109, 40, 217, 0.6);\n  --zone-active: rgba(139, 92, 246, 0.25);\n  --furniture-fill: rgba(100, 116, 139, 0.12);\n  --furniture-border: rgba(100, 116, 139, 0.55);\n  --glass-surface: rgba(255, 255, 255, 0.92);\n  --glass-border: rgba(59, 130, 246, 0.18);\n  --text-primary: #1e293b;\n  --text-muted: rgba(71, 85, 105, 0.8);\n}\n\n.card-container {\n  background: var(--glass-surface);\n  border: 1px solid var(--glass-border);\n  border-radius: 16px;\n  backdrop-filter: blur(20px);\n  -webkit-backdrop-filter: blur(20px);\n  overflow: hidden;\n  color: var(--text-primary);\n  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);\n}\n\n.card-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 14px 18px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(15, 23, 42, 0.4);\n}\n\n.card-title {\n  font-size: 15px;\n  font-weight: 600;\n  letter-spacing: 0.02em;\n  color: var(--text-primary);\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title::before {\n  content: '';\n  display: inline-block;\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  background: #38bdf8;\n  box-shadow: 0 0 8px #38bdf8;\n  animation: pulse-dot 2s ease-in-out infinite;\n}\n\n@keyframes pulse-dot {\n  0%, 100% { opacity: 1; transform: scale(1); }\n  50% { opacity: 0.6; transform: scale(0.85); }\n}\n\n.header-actions {\n  display: flex;\n  gap: 8px;\n}\n\n.icon-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 6px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.icon-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.icon-btn.active {\n  background: rgba(56, 189, 248, 0.2);\n  border-color: rgba(56, 189, 248, 0.6);\n  color: #38bdf8;\n}\n\n.card-body {\n  display: flex;\n  flex-direction: row;\n  min-height: 400px;\n}\n\n.canvas-wrap {\n  flex: 1;\n  position: relative;\n  background: var(--radar-bg);\n  min-width: 0;\n}\n\ncanvas {\n  display: block;\n  width: 100%;\n  height: 100%;\n  cursor: crosshair;\n}\n\ncanvas.cursor-default {\n  cursor: default;\n}\n\ncanvas.cursor-crosshair {\n  cursor: crosshair;\n}\n\ncanvas.cursor-grab {\n  cursor: grab;\n}\n\ncanvas.cursor-grabbing {\n  cursor: grabbing;\n}\n\ncanvas.cursor-move {\n  cursor: move;\n}\n\n.sidebar {\n  width: 200px;\n  min-width: 160px;\n  background: rgba(10, 14, 26, 0.7);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  overflow-y: auto;\n  overflow-x: hidden;\n}\n\n:host(.light-scheme) .sidebar {\n  background: rgba(241, 245, 249, 0.85);\n}\n\n:host(.light-scheme) .card-header {\n  background: rgba(248, 250, 252, 0.6);\n}\n\n:host(.light-scheme) .edit-toolbar {\n  background: rgba(241, 245, 249, 0.7);\n}\n\n:host(.light-scheme) .settings-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .zone-name-dialog {\n  background: rgba(255, 255, 255, 0.99);\n  border-color: rgba(59, 130, 246, 0.35);\n}\n\n:host(.light-scheme) .yaml-overlay {\n  background: rgba(248, 250, 252, 0.98);\n}\n\n:host(.light-scheme) .yaml-block {\n  background: rgba(241, 245, 249, 0.8);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .yaml-code {\n  color: #334155;\n}\n\n:host(.light-scheme) .icon-btn {\n  background: rgba(59, 130, 246, 0.08);\n  border-color: rgba(59, 130, 246, 0.2);\n}\n\n:host(.light-scheme) .icon-btn:hover {\n  background: rgba(59, 130, 246, 0.15);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .action-btn {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.18);\n}\n\n:host(.light-scheme) .action-btn:hover {\n  background: rgba(59, 130, 246, 0.14);\n  border-color: rgba(59, 130, 246, 0.4);\n}\n\n:host(.light-scheme) .furniture-btn {\n  background: rgba(59, 130, 246, 0.05);\n  border-color: rgba(59, 130, 246, 0.14);\n}\n\n:host(.light-scheme) .furniture-btn:hover {\n  background: rgba(59, 130, 246, 0.12);\n  border-color: rgba(59, 130, 246, 0.3);\n}\n\n:host(.light-scheme) .zone-name-input {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.2);\n  color: var(--text-primary);\n}\n\n.sidebar-section {\n  padding: 12px;\n  border-bottom: 1px solid rgba(99, 179, 237, 0.06);\n}\n\n.sidebar-label {\n  font-size: 10px;\n  font-weight: 700;\n  letter-spacing: 0.1em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n  margin-bottom: 8px;\n}\n\n.zone-item {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.zone-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n  margin-right: 6px;\n}\n\n.zone-name {\n  flex: 1;\n  color: var(--text-primary);\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.zone-status {\n  font-size: 10px;\n  padding: 2px 6px;\n  border-radius: 4px;\n  font-weight: 600;\n}\n\n.zone-status.active {\n  background: rgba(167, 139, 250, 0.25);\n  color: #a78bfa;\n}\n\n.zone-status.clear {\n  color: var(--text-muted);\n}\n\n.target-item {\n  padding: 5px 0;\n  font-size: 12px;\n}\n\n.target-header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  margin-bottom: 2px;\n}\n\n.target-dot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n}\n\n.target-label {\n  font-weight: 600;\n  color: var(--text-primary);\n}\n\n.target-inactive {\n  color: var(--text-muted);\n  font-style: italic;\n}\n\n.target-coords {\n  font-size: 11px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  padding-left: 14px;\n}\n\n.sidebar-actions {\n  padding: 12px;\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  margin-top: auto;\n}\n\n.action-btn {\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 8px;\n  color: var(--text-primary);\n  cursor: pointer;\n  padding: 7px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  text-align: left;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.action-btn:hover {\n  background: rgba(99, 179, 237, 0.16);\n  border-color: rgba(99, 179, 237, 0.4);\n}\n\n.action-btn.active {\n  background: rgba(139, 92, 246, 0.2);\n  border-color: rgba(139, 92, 246, 0.6);\n  color: #a78bfa;\n}\n\n/* Edit toolbar */\n.edit-toolbar {\n  padding: 8px 12px;\n  border-bottom: 1px solid var(--glass-border);\n  background: rgba(10, 14, 26, 0.5);\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  align-items: center;\n}\n\n.toolbar-group {\n  display: flex;\n  gap: 4px;\n  align-items: center;\n}\n\n.toolbar-separator {\n  width: 1px;\n  height: 20px;\n  background: var(--glass-border);\n  margin: 0 4px;\n}\n\n/* Furniture picker */\n.furniture-picker {\n  padding: 8px;\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 4px;\n}\n\n.furniture-btn {\n  background: rgba(99, 179, 237, 0.05);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 6px;\n  cursor: pointer;\n  padding: 6px 4px;\n  font-size: 10px;\n  color: var(--text-muted);\n  text-align: center;\n  transition: background 0.15s, border-color 0.15s;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n}\n\n.furniture-btn:hover {\n  background: rgba(99, 179, 237, 0.12);\n  border-color: rgba(99, 179, 237, 0.3);\n  color: var(--text-primary);\n}\n\n.furniture-btn.selected {\n  background: rgba(56, 189, 248, 0.15);\n  border-color: rgba(56, 189, 248, 0.5);\n  color: #38bdf8;\n}\n\n.furniture-btn-icon {\n  font-size: 16px;\n  line-height: 1;\n}\n\n.furniture-btn-label {\n  font-size: 9px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  max-width: 100%;\n}\n\n/* Settings overlay */\n.settings-overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  width: 280px;\n  background: rgba(10, 14, 26, 0.95);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  z-index: 100;\n  overflow-y: auto;\n  backdrop-filter: blur(20px);\n  transform: translateX(100%);\n  transition: transform 0.2s ease;\n}\n\n.settings-overlay.open {\n  transform: translateX(0);\n}\n\n.settings-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  font-weight: 600;\n}\n\n.settings-body {\n  padding: 12px 16px;\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n}\n\n.setting-group {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.setting-label {\n  font-size: 11px;\n  font-weight: 600;\n  letter-spacing: 0.05em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n}\n\n.setting-row {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.setting-row label {\n  font-size: 13px;\n  color: var(--text-primary);\n  flex: 1;\n}\n\n.setting-row select {\n  flex: 1;\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid var(--glass-border);\n  border-radius: 6px;\n  padding: 5px 8px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 12px;\n  cursor: pointer;\n  outline: none;\n}\n\n.setting-row select:focus {\n  border-color: rgba(56, 189, 248, 0.5);\n}\n\n:host(.light-scheme) .setting-row select {\n  background: rgba(59, 130, 246, 0.07);\n  border-color: rgba(59, 130, 246, 0.18);\n}\n\n.setting-row input[type=\"range\"] {\n  flex: 1;\n  accent-color: #38bdf8;\n}\n\n.setting-row input[type=\"checkbox\"] {\n  accent-color: #38bdf8;\n  width: 16px;\n  height: 16px;\n}\n\n.setting-row input[type=\"color\"] {\n  width: 32px;\n  height: 24px;\n  border: 1px solid var(--glass-border);\n  border-radius: 4px;\n  cursor: pointer;\n  background: none;\n  padding: 0;\n}\n\n.setting-value {\n  font-size: 12px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  min-width: 36px;\n  text-align: right;\n}\n\n/* Zone name dialog */\n.zone-name-dialog {\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n  background: rgba(15, 23, 42, 0.98);\n  border: 1px solid rgba(99, 179, 237, 0.3);\n  border-radius: 12px;\n  padding: 20px;\n  z-index: 200;\n  min-width: 240px;\n  backdrop-filter: blur(20px);\n  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);\n}\n\n.zone-name-dialog h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0 0 12px 0;\n  color: var(--text-primary);\n}\n\n.zone-name-input {\n  width: 100%;\n  background: rgba(99, 179, 237, 0.08);\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  padding: 8px 10px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 13px;\n  box-sizing: border-box;\n  outline: none;\n}\n\n.zone-name-input:focus {\n  border-color: rgba(99, 179, 237, 0.5);\n  background: rgba(99, 179, 237, 0.12);\n}\n\n.dialog-actions {\n  display: flex;\n  gap: 8px;\n  margin-top: 12px;\n  justify-content: flex-end;\n}\n\n.btn-primary {\n  background: rgba(56, 189, 248, 0.2);\n  border: 1px solid rgba(56, 189, 248, 0.5);\n  border-radius: 6px;\n  color: #38bdf8;\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-primary:hover {\n  background: rgba(56, 189, 248, 0.3);\n}\n\n.btn-secondary {\n  background: transparent;\n  border: 1px solid rgba(99, 179, 237, 0.2);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 6px 14px;\n  font-family: inherit;\n  font-size: 12px;\n  transition: background 0.15s;\n}\n\n.btn-secondary:hover {\n  background: rgba(99, 179, 237, 0.08);\n}\n\n/* YAML export overlay */\n.yaml-overlay {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  background: rgba(10, 14, 26, 0.98);\n  z-index: 300;\n  display: flex;\n  flex-direction: column;\n  padding: 16px;\n  overflow-y: auto;\n}\n\n.yaml-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 12px;\n  flex-shrink: 0;\n}\n\n.yaml-header h3 {\n  font-size: 14px;\n  font-weight: 600;\n  margin: 0;\n  color: var(--text-primary);\n}\n\n.yaml-block {\n  background: rgba(0, 0, 0, 0.4);\n  border: 1px solid rgba(99, 179, 237, 0.15);\n  border-radius: 8px;\n  padding: 12px;\n  flex: 1;\n  overflow-y: auto;\n  position: relative;\n}\n\n.yaml-code {\n  font-family: 'Fira Mono', 'Consolas', monospace;\n  font-size: 11px;\n  color: #94a3b8;\n  white-space: pre;\n  line-height: 1.5;\n}\n\n.copy-btn {\n  position: absolute;\n  top: 8px;\n  right: 8px;\n  background: rgba(99, 179, 237, 0.12);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 4px 8px;\n  font-size: 11px;\n  font-family: inherit;\n  transition: background 0.15s;\n}\n\n.copy-btn:hover {\n  background: rgba(99, 179, 237, 0.2);\n  color: var(--text-primary);\n}\n\n/* Tooltip */\n.tooltip {\n  position: absolute;\n  background: rgba(15, 23, 42, 0.95);\n  border: 1px solid rgba(99, 179, 237, 0.25);\n  border-radius: 6px;\n  padding: 5px 8px;\n  font-size: 11px;\n  color: var(--text-muted);\n  pointer-events: none;\n  z-index: 50;\n  white-space: nowrap;\n  font-variant-numeric: tabular-nums;\n}\n\n/* Responsive */\n@media (max-width: 500px) {\n  .card-body {\n    flex-direction: column;\n  }\n  .sidebar {\n    width: 100%;\n    border-left: none;\n    border-top: 1px solid var(--glass-border);\n    flex-direction: row;\n    flex-wrap: wrap;\n    max-height: 200px;\n    overflow-y: auto;\n  }\n  .sidebar-section {\n    flex: 1;\n    min-width: 140px;\n  }\n  .sidebar-actions {\n    flex-direction: row;\n    flex-wrap: wrap;\n    margin-top: 0;\n    padding: 8px;\n  }\n}\n";
+var cardCss = "/* Mushroom-inspired LD2450 Radar Card */\n:host {\n  display: block;\n  font-family: var(--ha-card-header-font-family, var(--paper-font-headline_-_font-family, 'Roboto', 'Noto', system-ui, sans-serif));\n  --radar-bg: var(--card-background-color, #1c1c1c);\n  --radar-grid: rgba(255, 255, 255, 0.06);\n  --radar-sweep: rgba(var(--rgb-primary-color, 66, 133, 244), 0.12);\n  --radar-fov: rgba(var(--rgb-primary-color, 66, 133, 244), 0.05);\n  --radar-fov-border: rgba(var(--rgb-primary-color, 66, 133, 244), 0.35);\n  --target-primary: var(--primary-color, #4286f4);\n  --target-trail: rgba(var(--rgb-primary-color, 66, 133, 244), 0.25);\n  --zone-fill: rgba(var(--rgb-state-active-color, 139, 92, 246), 0.12);\n  --zone-border: rgba(var(--rgb-state-active-color, 139, 92, 246), 0.6);\n  --zone-active: rgba(var(--rgb-state-active-color, 139, 92, 246), 0.25);\n  --furniture-fill: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.06);\n  --furniture-border: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.18);\n  --glass-surface: var(--ha-card-background, var(--card-background-color, #1e1e1e));\n  --glass-border: var(--divider-color, rgba(255, 255, 255, 0.08));\n  --text-primary: var(--primary-text-color, #e1e1e1);\n  --text-muted: var(--secondary-text-color, rgba(255, 255, 255, 0.5));\n  --mush-chip-bg: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.06);\n  --mush-chip-border: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.08);\n  --mush-active-bg: rgba(var(--rgb-state-active-color, 139, 92, 246), 0.12);\n  --mush-active-text: var(--state-active-color, #a78bfa);\n}\n\n/* Light color scheme */\n:host(.light-scheme) {\n  --radar-bg: var(--card-background-color, #f5f5f5);\n  --radar-grid: rgba(0, 0, 0, 0.06);\n  --radar-sweep: rgba(var(--rgb-primary-color, 66, 133, 244), 0.08);\n  --radar-fov: rgba(var(--rgb-primary-color, 66, 133, 244), 0.04);\n  --radar-fov-border: rgba(var(--rgb-primary-color, 66, 133, 244), 0.4);\n  --target-primary: var(--primary-color, #1a73e8);\n  --target-trail: rgba(var(--rgb-primary-color, 66, 133, 244), 0.2);\n  --zone-fill: rgba(var(--rgb-state-active-color, 109, 40, 217), 0.08);\n  --zone-border: rgba(var(--rgb-state-active-color, 109, 40, 217), 0.5);\n  --zone-active: rgba(var(--rgb-state-active-color, 139, 92, 246), 0.2);\n  --furniture-fill: rgba(0, 0, 0, 0.04);\n  --furniture-border: rgba(0, 0, 0, 0.12);\n  --glass-surface: var(--ha-card-background, var(--card-background-color, #fff));\n  --glass-border: var(--divider-color, rgba(0, 0, 0, 0.08));\n  --text-primary: var(--primary-text-color, #212121);\n  --text-muted: var(--secondary-text-color, rgba(0, 0, 0, 0.5));\n  --mush-chip-bg: rgba(0, 0, 0, 0.04);\n  --mush-chip-border: rgba(0, 0, 0, 0.06);\n  --mush-active-bg: rgba(var(--rgb-state-active-color, 139, 92, 246), 0.08);\n  --mush-active-text: var(--state-active-color, #7c3aed);\n}\n\n/* Card container — clean ha-card style */\n.card-container {\n  background: var(--glass-surface);\n  border-radius: var(--ha-card-border-radius, 12px);\n  overflow: hidden;\n  color: var(--text-primary);\n  box-shadow: var(--ha-card-box-shadow, none);\n  border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--glass-border));\n}\n\n/* Header — Mushroom minimal style */\n.card-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n}\n\n.card-title {\n  font-size: 14px;\n  font-weight: 500;\n  color: var(--text-primary);\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title::before {\n  content: '';\n  display: inline-block;\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: var(--target-primary);\n  animation: pulse-dot 2s ease-in-out infinite;\n}\n\n@keyframes pulse-dot {\n  0%, 100% { opacity: 1; }\n  50% { opacity: 0.4; }\n}\n\n.header-actions {\n  display: flex;\n  gap: 4px;\n}\n\n/* Icon button — mushroom chip style */\n.icon-btn {\n  background: var(--mush-chip-bg);\n  border: none;\n  border-radius: 18px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 6px 10px;\n  font-size: 12px;\n  font-family: inherit;\n  transition: background 0.2s, color 0.2s;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  -webkit-tap-highlight-color: transparent;\n}\n\n.icon-btn:hover {\n  background: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.1);\n  color: var(--text-primary);\n}\n\n.icon-btn:active {\n  transform: scale(0.96);\n}\n\n.icon-btn.active {\n  background: var(--mush-active-bg);\n  color: var(--mush-active-text);\n}\n\n.icon-btn:disabled {\n  opacity: 0.35;\n  cursor: default;\n  pointer-events: none;\n}\n\n/* Card body */\n.card-body {\n  display: flex;\n  flex-direction: column;\n}\n\n.canvas-wrap {\n  position: relative;\n  background: var(--radar-bg);\n  min-width: 0;\n  aspect-ratio: 4 / 3;\n}\n\ncanvas {\n  display: block;\n  width: 100%;\n  height: 100%;\n  cursor: crosshair;\n}\n\ncanvas.cursor-default { cursor: default; }\ncanvas.cursor-crosshair { cursor: crosshair; }\ncanvas.cursor-grab { cursor: grab; }\ncanvas.cursor-grabbing { cursor: grabbing; }\ncanvas.cursor-move { cursor: move; }\n\n/* Status bar — compact chips below the canvas */\n.status-bar {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  padding: 10px 14px;\n  align-items: center;\n}\n\n.status-chip {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  padding: 4px 10px;\n  border-radius: 16px;\n  font-size: 12px;\n  font-weight: 500;\n  background: var(--mush-chip-bg);\n  color: var(--text-muted);\n  transition: background 0.2s;\n}\n\n.status-chip.active {\n  background: var(--mush-active-bg);\n  color: var(--mush-active-text);\n}\n\n.chip-dot {\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  flex-shrink: 0;\n}\n\n.chip-label {\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  max-width: 120px;\n}\n\n.chip-badge {\n  font-size: 10px;\n  font-weight: 600;\n  padding: 1px 5px;\n  border-radius: 8px;\n  background: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.06);\n}\n\n.status-chip.active .chip-badge {\n  background: rgba(var(--rgb-state-active-color, 139, 92, 246), 0.2);\n}\n\n/* Edit toolbar — compact pill style */\n.edit-toolbar {\n  padding: 8px 14px;\n  border-top: 1px solid var(--glass-border);\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  align-items: center;\n}\n\n.toolbar-group {\n  display: flex;\n  gap: 4px;\n  align-items: center;\n}\n\n.toolbar-separator {\n  width: 1px;\n  height: 16px;\n  background: var(--glass-border);\n  margin: 0 2px;\n}\n\n/* Furniture picker */\n.furniture-picker {\n  padding: 6px 14px 10px;\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));\n  gap: 4px;\n}\n\n.furniture-btn {\n  background: var(--mush-chip-bg);\n  border: none;\n  border-radius: 10px;\n  cursor: pointer;\n  padding: 6px 4px;\n  font-size: 10px;\n  color: var(--text-muted);\n  text-align: center;\n  transition: background 0.2s, color 0.2s;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n}\n\n.furniture-btn:hover {\n  background: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.1);\n  color: var(--text-primary);\n}\n\n.furniture-btn.selected {\n  background: var(--mush-active-bg);\n  color: var(--mush-active-text);\n}\n\n.furniture-btn-icon {\n  font-size: 16px;\n  line-height: 1;\n}\n\n.furniture-btn-label {\n  font-size: 9px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  max-width: 100%;\n}\n\n/* Settings overlay */\n.settings-overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  width: 280px;\n  background: var(--glass-surface);\n  border-left: 1px solid var(--glass-border);\n  display: flex;\n  flex-direction: column;\n  z-index: 100;\n  overflow-y: auto;\n  transform: translateX(100%);\n  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);\n}\n\n.settings-overlay.open {\n  transform: translateX(0);\n}\n\n.settings-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 12px 16px;\n  border-bottom: 1px solid var(--glass-border);\n  font-weight: 500;\n  font-size: 14px;\n}\n\n.settings-body {\n  padding: 12px 16px;\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n}\n\n.setting-group {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.setting-label {\n  font-size: 11px;\n  font-weight: 600;\n  letter-spacing: 0.05em;\n  text-transform: uppercase;\n  color: var(--text-muted);\n}\n\n.setting-row {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.setting-row label {\n  font-size: 13px;\n  color: var(--text-primary);\n  flex: 1;\n}\n\n.setting-row select {\n  flex: 1;\n  background: var(--mush-chip-bg);\n  border: 1px solid var(--glass-border);\n  border-radius: 8px;\n  padding: 6px 8px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 12px;\n  cursor: pointer;\n  outline: none;\n}\n\n.setting-row select:focus {\n  border-color: var(--target-primary);\n}\n\n.setting-row input[type=\"range\"] {\n  flex: 1;\n  accent-color: var(--target-primary);\n}\n\n.setting-row input[type=\"checkbox\"] {\n  accent-color: var(--target-primary);\n  width: 16px;\n  height: 16px;\n}\n\n.setting-row input[type=\"color\"] {\n  width: 32px;\n  height: 24px;\n  border: 1px solid var(--glass-border);\n  border-radius: 6px;\n  cursor: pointer;\n  background: none;\n  padding: 0;\n}\n\n.setting-value {\n  font-size: 12px;\n  color: var(--text-muted);\n  font-variant-numeric: tabular-nums;\n  min-width: 36px;\n  text-align: right;\n}\n\n/* Zone name dialog */\n.zone-name-dialog {\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n  background: var(--glass-surface);\n  border: 1px solid var(--glass-border);\n  border-radius: 16px;\n  padding: 20px;\n  z-index: 200;\n  min-width: 240px;\n  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);\n}\n\n.zone-name-dialog h3 {\n  font-size: 14px;\n  font-weight: 500;\n  margin: 0 0 12px 0;\n  color: var(--text-primary);\n}\n\n.zone-name-input {\n  width: 100%;\n  background: var(--mush-chip-bg);\n  border: 1px solid var(--glass-border);\n  border-radius: 10px;\n  padding: 10px 12px;\n  color: var(--text-primary);\n  font-family: inherit;\n  font-size: 13px;\n  box-sizing: border-box;\n  outline: none;\n  transition: border-color 0.2s;\n}\n\n.zone-name-input:focus {\n  border-color: var(--target-primary);\n}\n\n.dialog-actions {\n  display: flex;\n  gap: 8px;\n  margin-top: 14px;\n  justify-content: flex-end;\n}\n\n.btn-primary {\n  background: var(--mush-active-bg);\n  border: none;\n  border-radius: 18px;\n  color: var(--mush-active-text);\n  cursor: pointer;\n  padding: 8px 18px;\n  font-family: inherit;\n  font-size: 12px;\n  font-weight: 500;\n  transition: background 0.2s;\n}\n\n.btn-primary:hover {\n  filter: brightness(1.1);\n}\n\n.btn-secondary {\n  background: var(--mush-chip-bg);\n  border: none;\n  border-radius: 18px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 8px 18px;\n  font-family: inherit;\n  font-size: 12px;\n  font-weight: 500;\n  transition: background 0.2s;\n}\n\n.btn-secondary:hover {\n  background: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.1);\n}\n\n/* YAML export overlay */\n.yaml-overlay {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  background: var(--glass-surface);\n  z-index: 300;\n  display: flex;\n  flex-direction: column;\n  padding: 16px;\n  overflow-y: auto;\n}\n\n.yaml-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 12px;\n  flex-shrink: 0;\n}\n\n.yaml-header h3 {\n  font-size: 14px;\n  font-weight: 500;\n  margin: 0;\n  color: var(--text-primary);\n}\n\n.yaml-block {\n  background: var(--mush-chip-bg);\n  border: 1px solid var(--glass-border);\n  border-radius: 12px;\n  padding: 12px;\n  flex: 1;\n  overflow-y: auto;\n  position: relative;\n}\n\n.yaml-code {\n  font-family: 'Fira Mono', 'Consolas', monospace;\n  font-size: 11px;\n  color: var(--text-muted);\n  white-space: pre;\n  line-height: 1.5;\n}\n\n.copy-btn {\n  position: absolute;\n  top: 8px;\n  right: 8px;\n  background: var(--mush-chip-bg);\n  border: none;\n  border-radius: 14px;\n  color: var(--text-muted);\n  cursor: pointer;\n  padding: 4px 10px;\n  font-size: 11px;\n  font-family: inherit;\n  transition: background 0.2s;\n}\n\n.copy-btn:hover {\n  background: rgba(var(--rgb-primary-text-color, 255, 255, 255), 0.12);\n  color: var(--text-primary);\n}\n\n/* Tooltip */\n.tooltip {\n  position: absolute;\n  background: var(--glass-surface);\n  border: 1px solid var(--glass-border);\n  border-radius: 8px;\n  padding: 4px 8px;\n  font-size: 11px;\n  color: var(--text-muted);\n  pointer-events: none;\n  z-index: 50;\n  white-space: nowrap;\n  font-variant-numeric: tabular-nums;\n}\n\n/* Responsive */\n@media (max-width: 500px) {\n  .status-bar {\n    padding: 8px 10px;\n    gap: 4px;\n  }\n  .status-chip {\n    font-size: 11px;\n    padding: 3px 8px;\n  }\n}\n";
 
 var _a;
 const SENSOR_MARGIN = 40;
@@ -2444,7 +2444,6 @@ class LD2450RadarCard extends HTMLElement {
       <style>${cardCss}</style>
       <div class="card-container">
         ${this._renderHeader()}
-        ${this._isEditMode ? this._renderEditToolbar() : ''}
         <div class="card-body">
           <div class="canvas-wrap" id="canvas-wrap">
             <canvas id="radar-canvas" aria-label="Radar visualization"></canvas>
@@ -2453,8 +2452,9 @@ class LD2450RadarCard extends HTMLElement {
             ${this._showSettings ? this._renderSettingsPanel() : ''}
             ${this._showYaml ? this._renderYamlPanel() : ''}
           </div>
-          ${this._renderSidebar()}
+          ${this._renderStatusBar()}
         </div>
+        ${this._isEditMode ? this._renderEditToolbar() : ''}
       </div>
     `;
         this._applyColorScheme();
@@ -2462,19 +2462,16 @@ class LD2450RadarCard extends HTMLElement {
     }
     _renderHeader() {
         var _a;
-        const isLight = this._config.color_scheme === 'light';
         return `
       <div class="card-header">
         <div class="card-title">${(_a = this._config.title) !== null && _a !== void 0 ? _a : 'LD2450 Radar'}</div>
         <div class="header-actions">
-          <button class="icon-btn ${isLight ? 'active' : ''}" id="btn-theme" aria-label="Toggle light/dark theme"
-            title="${isLight ? 'Switch to dark mode' : 'Switch to light mode'}">
-            ${isLight ? '☀️' : '🌙'}
+          <button class="icon-btn ${this._isEditMode ? 'active' : ''}" id="btn-edit" aria-label="Toggle edit mode"
+            title="Edit layout">
+            ✏️
           </button>
-          <button class="icon-btn ${this._isEditMode ? 'active' : ''}" id="btn-edit" aria-label="Toggle edit mode">
-            ✏️ Edit
-          </button>
-          <button class="icon-btn ${this._showSettings ? 'active' : ''}" id="btn-settings" aria-label="Open settings">
+          <button class="icon-btn ${this._showSettings ? 'active' : ''}" id="btn-settings" aria-label="Open settings"
+            title="Settings">
             ⚙️
           </button>
         </div>
@@ -2485,8 +2482,8 @@ class LD2450RadarCard extends HTMLElement {
         var _a, _b;
         const modes = [
             { id: 'select', label: 'Select', icon: '↖️' },
-            { id: 'draw-zone', label: 'Draw Zone', icon: '📐' },
-            { id: 'add-furniture', label: 'Add Furniture', icon: '🛋️' },
+            { id: 'draw-zone', label: 'Zone', icon: '📐' },
+            { id: 'add-furniture', label: 'Furniture', icon: '🛋️' },
         ];
         return `
       <div class="edit-toolbar">
@@ -2504,65 +2501,38 @@ class LD2450RadarCard extends HTMLElement {
           <button class="icon-btn" id="btn-redo" aria-label="Redo" ${this._historyIndex >= this._history.length - 1 ? 'disabled' : ''}>↪</button>
         </div>
         <div class="toolbar-separator"></div>
-        <button class="icon-btn" id="btn-save" aria-label="Save">💾 Save</button>
+        <div class="toolbar-group">
+          <button class="icon-btn" id="btn-export-yaml" aria-label="Export zone YAML">📋 YAML</button>
+          <button class="icon-btn" id="btn-save" aria-label="Save">💾 Save</button>
+        </div>
       </div>
       ${this._editMode === 'add-furniture' ? ((_b = (_a = this._configEditor) === null || _a === void 0 ? void 0 : _a.renderFurniturePicker(this._selectedFurnitureType)) !== null && _b !== void 0 ? _b : '') : ''}
     `;
     }
-    _renderSidebar() {
+    _renderStatusBar() {
         var _a, _b, _c, _d;
         const zones = (_b = (_a = this._zoneEditor) === null || _a === void 0 ? void 0 : _a.getZones()) !== null && _b !== void 0 ? _b : [];
         const targets = (_d = (_c = this._tracker) === null || _c === void 0 ? void 0 : _c.getTargets()) !== null && _d !== void 0 ? _d : [];
+        const activeTargets = targets.filter(t => t.active);
+        const hasContent = zones.length > 0 || activeTargets.length > 0;
+        if (!hasContent)
+            return '';
         return `
-      <div class="sidebar">
-        ${zones.length > 0 ? `
-          <div class="sidebar-section">
-            <div class="sidebar-label">Zones</div>
-            ${zones.map(z => `
-              <div class="zone-item">
-                <span class="zone-dot" style="background:${z.color}"></span>
-                <span class="zone-name">${z.name}</span>
-                <span class="zone-status ${z.occupied ? 'active' : 'clear'}">${z.occupied ? 'Active' : 'Clear'}</span>
-              </div>
-            `).join('')}
+      <div class="status-bar" id="status-bar">
+        ${activeTargets.map(t => `
+          <div class="status-chip active" data-target-id="${t.id}">
+            <span class="chip-dot" style="background:${t.color}"></span>
+            <span class="chip-label">${t.label || `T${t.id}`}</span>
+            <span class="chip-badge">${t.x.toFixed(0)}, ${t.y.toFixed(0)}</span>
           </div>
-        ` : ''}
-
-        <div class="sidebar-section">
-          <div class="sidebar-label">Targets</div>
-          ${targets.map(t => t.active ? `
-            <div class="target-item">
-              <div class="target-header">
-                <span class="target-dot" style="background:${t.color}"></span>
-                <span class="target-label">${t.label || `T${t.id}`}</span>
-              </div>
-              <div class="target-coords">
-                x: ${t.x.toFixed(0)}mm &nbsp; y: ${t.y.toFixed(0)}mm
-              </div>
-            </div>
-          ` : `
-            <div class="target-item">
-              <div class="target-header">
-                <span class="target-dot" style="background:${t.color};opacity:0.3"></span>
-                <span class="target-inactive">${t.label || `T${t.id}`} (inactive)</span>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-
-        <div class="sidebar-actions">
-          <button class="action-btn ${this._editMode === 'draw-zone' ? 'active' : ''}"
-            id="btn-draw-zone" aria-label="Draw zone">
-            📐 Draw Zone
-          </button>
-          <button class="action-btn ${this._editMode === 'add-furniture' ? 'active' : ''}"
-            id="btn-add-furniture" aria-label="Add furniture">
-            🛋️ Add Furniture
-          </button>
-          <button class="action-btn" id="btn-export-yaml" aria-label="Export zone YAML">
-            📋 Export YAML
-          </button>
-        </div>
+        `).join('')}
+        ${zones.map(z => `
+          <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
+            <span class="chip-dot" style="background:${z.color}"></span>
+            <span class="chip-label">${z.name}</span>
+            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+          </div>
+        `).join('')}
       </div>
     `;
     }
@@ -2612,19 +2582,16 @@ class LD2450RadarCard extends HTMLElement {
     `;
     }
     _attachEventListeners() {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m;
         const $ = (id) => this._shadow.getElementById(id);
-        (_a = $('btn-theme')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', () => {
-            this._toggleColorScheme();
-        });
-        (_b = $('btn-edit')) === null || _b === void 0 ? void 0 : _b.addEventListener('click', () => {
+        (_a = $('btn-edit')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', () => {
             this._isEditMode = !this._isEditMode;
             if (!this._isEditMode)
                 this._editMode = 'none';
             this._renderDOM();
             this._setupCanvas();
         });
-        (_c = $('btn-settings')) === null || _c === void 0 ? void 0 : _c.addEventListener('click', () => {
+        (_b = $('btn-settings')) === null || _b === void 0 ? void 0 : _b.addEventListener('click', () => {
             var _a;
             this._showSettings = !this._showSettings;
             this._renderDOM();
@@ -2635,39 +2602,30 @@ class LD2450RadarCard extends HTMLElement {
                     (_a = this._configEditor) === null || _a === void 0 ? void 0 : _a.attachListeners(settingsBody);
             }
         });
-        (_d = $('btn-close-settings')) === null || _d === void 0 ? void 0 : _d.addEventListener('click', () => {
+        (_c = $('btn-close-settings')) === null || _c === void 0 ? void 0 : _c.addEventListener('click', () => {
             this._showSettings = false;
             this._renderDOM();
             this._setupCanvas();
         });
-        (_f = $('btn-close-yaml')) === null || _f === void 0 ? void 0 : _f.addEventListener('click', () => {
+        (_d = $('btn-close-yaml')) === null || _d === void 0 ? void 0 : _d.addEventListener('click', () => {
             this._showYaml = false;
             this._renderDOM();
             this._setupCanvas();
         });
-        (_g = $('btn-copy-yaml')) === null || _g === void 0 ? void 0 : _g.addEventListener('click', () => {
+        (_f = $('btn-copy-yaml')) === null || _f === void 0 ? void 0 : _f.addEventListener('click', () => {
             var _a;
             const pre = $('yaml-content');
             if (pre)
                 void navigator.clipboard.writeText((_a = pre.textContent) !== null && _a !== void 0 ? _a : '');
         });
-        (_h = $('btn-export-yaml')) === null || _h === void 0 ? void 0 : _h.addEventListener('click', () => {
+        (_g = $('btn-export-yaml')) === null || _g === void 0 ? void 0 : _g.addEventListener('click', () => {
             this._showYaml = true;
             this._renderDOM();
             this._setupCanvas();
         });
-        (_j = $('btn-draw-zone')) === null || _j === void 0 ? void 0 : _j.addEventListener('click', () => {
-            this._startDrawingMode();
-        });
-        (_k = $('btn-add-furniture')) === null || _k === void 0 ? void 0 : _k.addEventListener('click', () => {
-            this._editMode = this._editMode === 'add-furniture' ? 'none' : 'add-furniture';
-            this._isEditMode = this._editMode !== 'none';
-            this._renderDOM();
-            this._setupCanvas();
-        });
-        (_l = $('btn-undo')) === null || _l === void 0 ? void 0 : _l.addEventListener('click', () => this._undo());
-        (_m = $('btn-redo')) === null || _m === void 0 ? void 0 : _m.addEventListener('click', () => this._redo());
-        (_o = $('btn-save')) === null || _o === void 0 ? void 0 : _o.addEventListener('click', () => void this._save());
+        (_h = $('btn-undo')) === null || _h === void 0 ? void 0 : _h.addEventListener('click', () => this._undo());
+        (_j = $('btn-redo')) === null || _j === void 0 ? void 0 : _j.addEventListener('click', () => this._redo());
+        (_k = $('btn-save')) === null || _k === void 0 ? void 0 : _k.addEventListener('click', () => void this._save());
         // Edit mode toolbar buttons
         this._shadow.querySelectorAll('[data-mode]').forEach(el => {
             el.addEventListener('click', () => {
@@ -2694,8 +2652,8 @@ class LD2450RadarCard extends HTMLElement {
             });
         });
         // Zone name dialog
-        (_p = $('btn-confirm-zone')) === null || _p === void 0 ? void 0 : _p.addEventListener('click', () => this._confirmZoneName());
-        (_q = $('btn-cancel-zone')) === null || _q === void 0 ? void 0 : _q.addEventListener('click', () => {
+        (_l = $('btn-confirm-zone')) === null || _l === void 0 ? void 0 : _l.addEventListener('click', () => this._confirmZoneName());
+        (_m = $('btn-cancel-zone')) === null || _m === void 0 ? void 0 : _m.addEventListener('click', () => {
             this._zoneNamePending = null;
             this._renderDOM();
             this._setupCanvas();
@@ -2960,27 +2918,52 @@ class LD2450RadarCard extends HTMLElement {
     }
     _updateSidebarInPlace() {
         var _a, _b, _c, _d;
-        // Update target coords and zone status without full re-render
+        // Update status bar chips without full re-render
         const targets = (_b = (_a = this._tracker) === null || _a === void 0 ? void 0 : _a.getTargets()) !== null && _b !== void 0 ? _b : [];
         const zones = (_d = (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.getZones()) !== null && _d !== void 0 ? _d : [];
-        for (const t of targets) {
-            const coordEl = this._shadow.querySelector(`.target-item:nth-child(${t.id}) .target-coords`);
-            if (coordEl && t.active) {
-                coordEl.textContent = `x: ${t.x.toFixed(0)}mm   y: ${t.y.toFixed(0)}mm`;
-            }
+        const statusBar = this._shadow.getElementById('status-bar');
+        if (!statusBar)
+            return;
+        // Update active targets — if the set of active targets changed, we need
+        // a full status bar rebuild; otherwise just patch badge text.
+        const activeTargets = targets.filter(t => t.active);
+        const chipTargetEls = statusBar.querySelectorAll('[data-target-id]');
+        const needsRebuild = chipTargetEls.length !== activeTargets.length;
+        if (needsRebuild) {
+            // Rebuild status bar HTML in-place instead of full _renderDOM
+            statusBar.innerHTML = `
+        ${activeTargets.map(t => `
+          <div class="status-chip active" data-target-id="${t.id}">
+            <span class="chip-dot" style="background:${t.color}"></span>
+            <span class="chip-label">${t.label || `T${t.id}`}</span>
+            <span class="chip-badge">${t.x.toFixed(0)}, ${t.y.toFixed(0)}</span>
+          </div>
+        `).join('')}
+        ${zones.map(z => `
+          <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
+            <span class="chip-dot" style="background:${z.color}"></span>
+            <span class="chip-label">${z.name}</span>
+            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+          </div>
+        `).join('')}
+      `;
+            return;
         }
-        for (const zone of zones) {
-            // Find by zone name (simple approach)
-            this._shadow.querySelectorAll('.zone-item').forEach(el => {
-                const nameEl = el.querySelector('.zone-name');
-                if ((nameEl === null || nameEl === void 0 ? void 0 : nameEl.textContent) === zone.name) {
-                    const statusEl = el.querySelector('.zone-status');
-                    if (statusEl) {
-                        statusEl.textContent = zone.occupied ? 'Active' : 'Clear';
-                        statusEl.className = `zone-status ${zone.occupied ? 'active' : 'clear'}`;
-                    }
-                }
-            });
+        // Patch existing target chips
+        for (const t of activeTargets) {
+            const chip = statusBar.querySelector(`[data-target-id="${t.id}"] .chip-badge`);
+            if (chip)
+                chip.textContent = `${t.x.toFixed(0)}, ${t.y.toFixed(0)}`;
+        }
+        // Patch existing zone chips
+        for (const z of zones) {
+            const chip = statusBar.querySelector(`[data-zone-id="${z.id}"]`);
+            if (chip) {
+                const badge = chip.querySelector('.chip-badge');
+                if (badge)
+                    badge.textContent = z.occupied ? 'Occupied' : 'Clear';
+                chip.className = `status-chip ${z.occupied ? 'active' : ''}`;
+            }
         }
     }
     _stopRenderLoop() {

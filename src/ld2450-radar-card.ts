@@ -163,7 +163,6 @@ class LD2450RadarCard extends HTMLElement {
       <style>${cardCss}</style>
       <div class="card-container">
         ${this._renderHeader()}
-        ${this._isEditMode ? this._renderEditToolbar() : ''}
         <div class="card-body">
           <div class="canvas-wrap" id="canvas-wrap">
             <canvas id="radar-canvas" aria-label="Radar visualization"></canvas>
@@ -172,8 +171,9 @@ class LD2450RadarCard extends HTMLElement {
             ${this._showSettings ? this._renderSettingsPanel() : ''}
             ${this._showYaml ? this._renderYamlPanel() : ''}
           </div>
-          ${this._renderSidebar()}
+          ${this._renderStatusBar()}
         </div>
+        ${this._isEditMode ? this._renderEditToolbar() : ''}
       </div>
     `;
     this._applyColorScheme();
@@ -181,19 +181,16 @@ class LD2450RadarCard extends HTMLElement {
   }
 
   private _renderHeader(): string {
-    const isLight = this._config.color_scheme === 'light';
     return `
       <div class="card-header">
         <div class="card-title">${this._config.title ?? 'LD2450 Radar'}</div>
         <div class="header-actions">
-          <button class="icon-btn ${isLight ? 'active' : ''}" id="btn-theme" aria-label="Toggle light/dark theme"
-            title="${isLight ? 'Switch to dark mode' : 'Switch to light mode'}">
-            ${isLight ? '☀️' : '🌙'}
+          <button class="icon-btn ${this._isEditMode ? 'active' : ''}" id="btn-edit" aria-label="Toggle edit mode"
+            title="Edit layout">
+            ✏️
           </button>
-          <button class="icon-btn ${this._isEditMode ? 'active' : ''}" id="btn-edit" aria-label="Toggle edit mode">
-            ✏️ Edit
-          </button>
-          <button class="icon-btn ${this._showSettings ? 'active' : ''}" id="btn-settings" aria-label="Open settings">
+          <button class="icon-btn ${this._showSettings ? 'active' : ''}" id="btn-settings" aria-label="Open settings"
+            title="Settings">
             ⚙️
           </button>
         </div>
@@ -204,8 +201,8 @@ class LD2450RadarCard extends HTMLElement {
   private _renderEditToolbar(): string {
     const modes: Array<{ id: EditMode; label: string; icon: string }> = [
       { id: 'select', label: 'Select', icon: '↖️' },
-      { id: 'draw-zone', label: 'Draw Zone', icon: '📐' },
-      { id: 'add-furniture', label: 'Add Furniture', icon: '🛋️' },
+      { id: 'draw-zone', label: 'Zone', icon: '📐' },
+      { id: 'add-furniture', label: 'Furniture', icon: '🛋️' },
     ];
     return `
       <div class="edit-toolbar">
@@ -223,65 +220,38 @@ class LD2450RadarCard extends HTMLElement {
           <button class="icon-btn" id="btn-redo" aria-label="Redo" ${this._historyIndex >= this._history.length - 1 ? 'disabled' : ''}>↪</button>
         </div>
         <div class="toolbar-separator"></div>
-        <button class="icon-btn" id="btn-save" aria-label="Save">💾 Save</button>
+        <div class="toolbar-group">
+          <button class="icon-btn" id="btn-export-yaml" aria-label="Export zone YAML">📋 YAML</button>
+          <button class="icon-btn" id="btn-save" aria-label="Save">💾 Save</button>
+        </div>
       </div>
       ${this._editMode === 'add-furniture' ? (this._configEditor?.renderFurniturePicker(this._selectedFurnitureType) ?? '') : ''}
     `;
   }
 
-  private _renderSidebar(): string {
+  private _renderStatusBar(): string {
     const zones = this._zoneEditor?.getZones() ?? [];
     const targets = this._tracker?.getTargets() ?? [];
+    const activeTargets = targets.filter(t => t.active);
+    const hasContent = zones.length > 0 || activeTargets.length > 0;
+    if (!hasContent) return '';
+
     return `
-      <div class="sidebar">
-        ${zones.length > 0 ? `
-          <div class="sidebar-section">
-            <div class="sidebar-label">Zones</div>
-            ${zones.map(z => `
-              <div class="zone-item">
-                <span class="zone-dot" style="background:${z.color}"></span>
-                <span class="zone-name">${z.name}</span>
-                <span class="zone-status ${z.occupied ? 'active' : 'clear'}">${z.occupied ? 'Active' : 'Clear'}</span>
-              </div>
-            `).join('')}
+      <div class="status-bar" id="status-bar">
+        ${activeTargets.map(t => `
+          <div class="status-chip active" data-target-id="${t.id}">
+            <span class="chip-dot" style="background:${t.color}"></span>
+            <span class="chip-label">${t.label || `T${t.id}`}</span>
+            <span class="chip-badge">${t.x.toFixed(0)}, ${t.y.toFixed(0)}</span>
           </div>
-        ` : ''}
-
-        <div class="sidebar-section">
-          <div class="sidebar-label">Targets</div>
-          ${targets.map(t => t.active ? `
-            <div class="target-item">
-              <div class="target-header">
-                <span class="target-dot" style="background:${t.color}"></span>
-                <span class="target-label">${t.label || `T${t.id}`}</span>
-              </div>
-              <div class="target-coords">
-                x: ${t.x.toFixed(0)}mm &nbsp; y: ${t.y.toFixed(0)}mm
-              </div>
-            </div>
-          ` : `
-            <div class="target-item">
-              <div class="target-header">
-                <span class="target-dot" style="background:${t.color};opacity:0.3"></span>
-                <span class="target-inactive">${t.label || `T${t.id}`} (inactive)</span>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-
-        <div class="sidebar-actions">
-          <button class="action-btn ${this._editMode === 'draw-zone' ? 'active' : ''}"
-            id="btn-draw-zone" aria-label="Draw zone">
-            📐 Draw Zone
-          </button>
-          <button class="action-btn ${this._editMode === 'add-furniture' ? 'active' : ''}"
-            id="btn-add-furniture" aria-label="Add furniture">
-            🛋️ Add Furniture
-          </button>
-          <button class="action-btn" id="btn-export-yaml" aria-label="Export zone YAML">
-            📋 Export YAML
-          </button>
-        </div>
+        `).join('')}
+        ${zones.map(z => `
+          <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
+            <span class="chip-dot" style="background:${z.color}"></span>
+            <span class="chip-label">${z.name}</span>
+            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+          </div>
+        `).join('')}
       </div>
     `;
   }
@@ -335,10 +305,6 @@ class LD2450RadarCard extends HTMLElement {
   private _attachEventListeners(): void {
     const $ = (id: string) => this._shadow.getElementById(id);
 
-    $('btn-theme')?.addEventListener('click', () => {
-      this._toggleColorScheme();
-    });
-
     $('btn-edit')?.addEventListener('click', () => {
       this._isEditMode = !this._isEditMode;
       if (!this._isEditMode) this._editMode = 'none';
@@ -375,17 +341,6 @@ class LD2450RadarCard extends HTMLElement {
 
     $('btn-export-yaml')?.addEventListener('click', () => {
       this._showYaml = true;
-      this._renderDOM();
-      this._setupCanvas();
-    });
-
-    $('btn-draw-zone')?.addEventListener('click', () => {
-      this._startDrawingMode();
-    });
-
-    $('btn-add-furniture')?.addEventListener('click', () => {
-      this._editMode = this._editMode === 'add-furniture' ? 'none' : 'add-furniture';
-      this._isEditMode = this._editMode !== 'none';
       this._renderDOM();
       this._setupCanvas();
     });
@@ -698,29 +653,53 @@ class LD2450RadarCard extends HTMLElement {
   }
 
   private _updateSidebarInPlace(): void {
-    // Update target coords and zone status without full re-render
+    // Update status bar chips without full re-render
     const targets = this._tracker?.getTargets() ?? [];
     const zones = this._zoneEditor?.getZones() ?? [];
+    const statusBar = this._shadow.getElementById('status-bar');
+    if (!statusBar) return;
 
-    for (const t of targets) {
-      const coordEl = this._shadow.querySelector(`.target-item:nth-child(${t.id}) .target-coords`);
-      if (coordEl && t.active) {
-        coordEl.textContent = `x: ${t.x.toFixed(0)}mm   y: ${t.y.toFixed(0)}mm`;
-      }
+    // Update active targets — if the set of active targets changed, we need
+    // a full status bar rebuild; otherwise just patch badge text.
+    const activeTargets = targets.filter(t => t.active);
+    const chipTargetEls = statusBar.querySelectorAll('[data-target-id]');
+    const needsRebuild = chipTargetEls.length !== activeTargets.length;
+
+    if (needsRebuild) {
+      // Rebuild status bar HTML in-place instead of full _renderDOM
+      statusBar.innerHTML = `
+        ${activeTargets.map(t => `
+          <div class="status-chip active" data-target-id="${t.id}">
+            <span class="chip-dot" style="background:${t.color}"></span>
+            <span class="chip-label">${t.label || `T${t.id}`}</span>
+            <span class="chip-badge">${t.x.toFixed(0)}, ${t.y.toFixed(0)}</span>
+          </div>
+        `).join('')}
+        ${zones.map(z => `
+          <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
+            <span class="chip-dot" style="background:${z.color}"></span>
+            <span class="chip-label">${z.name}</span>
+            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+          </div>
+        `).join('')}
+      `;
+      return;
     }
 
-    for (const zone of zones) {
-      // Find by zone name (simple approach)
-      this._shadow.querySelectorAll('.zone-item').forEach(el => {
-        const nameEl = el.querySelector('.zone-name');
-        if (nameEl?.textContent === zone.name) {
-          const statusEl = el.querySelector('.zone-status');
-          if (statusEl) {
-            statusEl.textContent = zone.occupied ? 'Active' : 'Clear';
-            statusEl.className = `zone-status ${zone.occupied ? 'active' : 'clear'}`;
-          }
-        }
-      });
+    // Patch existing target chips
+    for (const t of activeTargets) {
+      const chip = statusBar.querySelector(`[data-target-id="${t.id}"] .chip-badge`);
+      if (chip) chip.textContent = `${t.x.toFixed(0)}, ${t.y.toFixed(0)}`;
+    }
+
+    // Patch existing zone chips
+    for (const z of zones) {
+      const chip = statusBar.querySelector(`[data-zone-id="${z.id}"]`);
+      if (chip) {
+        const badge = chip.querySelector('.chip-badge');
+        if (badge) badge.textContent = z.occupied ? 'Occupied' : 'Clear';
+        chip.className = `status-chip ${z.occupied ? 'active' : ''}`;
+      }
     }
   }
 
