@@ -69,6 +69,8 @@ class LD2450RadarCard extends HTMLElement {
   private _drawMousePos: Point | null = null;
   // Index of the hovered drawing vertex (0 = first vertex, for close-polygon indicator)
   private _drawHoveredVertex: number | null = null;
+  // Debounce timer for localStorage writes
+  private _persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     super();
@@ -864,6 +866,8 @@ class LD2450RadarCard extends HTMLElement {
 
   /**
    * Delete the currently selected zone or furniture item.
+   * Zone deletion takes priority — furniture is only deleted
+   * when no zone is currently selected.
    */
   private _deleteSelected(): void {
     this._pushHistory();
@@ -871,9 +875,10 @@ class LD2450RadarCard extends HTMLElement {
     if (selectedZone) {
       this._zoneEditor?.deleteZone(selectedZone);
       this._config.zones = this._zoneEditor?.getZoneConfigs() ?? [];
+    } else {
+      this._furnitureLayer?.deleteSelected();
+      this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
     }
-    this._furnitureLayer?.deleteSelected();
-    this._config.furniture = this._furnitureLayer?.getFurnitureConfigs() ?? [];
     this._persistConfig();
     this._radarCanvas?.markDirty();
     this._renderDOM();
@@ -890,36 +895,49 @@ class LD2450RadarCard extends HTMLElement {
   /**
    * Persist the current card configuration to localStorage so that
    * zones, furniture, and settings survive page refreshes.
+   * Debounced to avoid excessive writes during rapid changes (e.g. slider input).
    */
   private _persistConfig(): void {
-    try {
-      const toStore: Partial<CardConfig> = {
-        zones: this._config.zones,
-        furniture: this._config.furniture,
-        color_scheme: this._config.color_scheme,
-        sensor_position: this._config.sensor_position,
-        max_range: this._config.max_range,
-        fov_angle: this._config.fov_angle,
-        show_grid: this._config.show_grid,
-        show_sweep: this._config.show_sweep,
-        show_trails: this._config.show_trails,
-        trail_length: this._config.trail_length,
-      };
-      localStorage.setItem(this._storageKey(), JSON.stringify(toStore));
-    } catch (_e) {
-      // localStorage may be full or unavailable — not fatal
-    }
+    if (this._persistTimer !== null) clearTimeout(this._persistTimer);
+    this._persistTimer = setTimeout(() => {
+      try {
+        const toStore: Partial<CardConfig> = {
+          zones: this._config.zones,
+          furniture: this._config.furniture,
+          color_scheme: this._config.color_scheme,
+          sensor_position: this._config.sensor_position,
+          max_range: this._config.max_range,
+          fov_angle: this._config.fov_angle,
+          show_grid: this._config.show_grid,
+          show_sweep: this._config.show_sweep,
+          show_trails: this._config.show_trails,
+          trail_length: this._config.trail_length,
+        };
+        localStorage.setItem(this._storageKey(), JSON.stringify(toStore));
+      } catch (_e) {
+        // localStorage may be full or unavailable — not fatal
+      }
+    }, 300);
   }
 
   /**
    * Load previously persisted card config from localStorage.
+   * Validates the parsed data before returning it.
    */
   private _loadPersistedConfig(): Partial<CardConfig> | null {
     try {
       const raw = localStorage.getItem(this._storageKey());
-      if (raw) return JSON.parse(raw) as Partial<CardConfig>;
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      // Basic validation: must be a non-null object
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+      // Validate zones array if present
+      if (parsed.zones !== undefined && !Array.isArray(parsed.zones)) return null;
+      // Validate furniture array if present
+      if (parsed.furniture !== undefined && !Array.isArray(parsed.furniture)) return null;
+      return parsed as Partial<CardConfig>;
     } catch (_e) {
-      // ignore parse errors
+      // ignore parse errors or corrupted data
     }
     return null;
   }

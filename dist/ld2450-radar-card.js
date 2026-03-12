@@ -2302,6 +2302,8 @@ class LD2450RadarCard extends HTMLElement {
         this._drawMousePos = null;
         // Index of the hovered drawing vertex (0 = first vertex, for close-polygon indicator)
         this._drawHoveredVertex = null;
+        // Debounce timer for localStorage writes
+        this._persistTimer = null;
         this._shadow = this.attachShadow({ mode: 'open' });
     }
     // Called by HA to set the card config
@@ -3070,6 +3072,8 @@ class LD2450RadarCard extends HTMLElement {
     }
     /**
      * Delete the currently selected zone or furniture item.
+     * Zone deletion takes priority — furniture is only deleted
+     * when no zone is currently selected.
      */
     _deleteSelected() {
         var _a, _b, _c, _d, _f, _g, _h, _j;
@@ -3079,8 +3083,10 @@ class LD2450RadarCard extends HTMLElement {
             (_b = this._zoneEditor) === null || _b === void 0 ? void 0 : _b.deleteZone(selectedZone);
             this._config.zones = (_d = (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.getZoneConfigs()) !== null && _d !== void 0 ? _d : [];
         }
-        (_f = this._furnitureLayer) === null || _f === void 0 ? void 0 : _f.deleteSelected();
-        this._config.furniture = (_h = (_g = this._furnitureLayer) === null || _g === void 0 ? void 0 : _g.getFurnitureConfigs()) !== null && _h !== void 0 ? _h : [];
+        else {
+            (_f = this._furnitureLayer) === null || _f === void 0 ? void 0 : _f.deleteSelected();
+            this._config.furniture = (_h = (_g = this._furnitureLayer) === null || _g === void 0 ? void 0 : _g.getFurnitureConfigs()) !== null && _h !== void 0 ? _h : [];
+        }
         this._persistConfig();
         (_j = this._radarCanvas) === null || _j === void 0 ? void 0 : _j.markDirty();
         this._renderDOM();
@@ -3095,38 +3101,55 @@ class LD2450RadarCard extends HTMLElement {
     /**
      * Persist the current card configuration to localStorage so that
      * zones, furniture, and settings survive page refreshes.
+     * Debounced to avoid excessive writes during rapid changes (e.g. slider input).
      */
     _persistConfig() {
-        try {
-            const toStore = {
-                zones: this._config.zones,
-                furniture: this._config.furniture,
-                color_scheme: this._config.color_scheme,
-                sensor_position: this._config.sensor_position,
-                max_range: this._config.max_range,
-                fov_angle: this._config.fov_angle,
-                show_grid: this._config.show_grid,
-                show_sweep: this._config.show_sweep,
-                show_trails: this._config.show_trails,
-                trail_length: this._config.trail_length,
-            };
-            localStorage.setItem(this._storageKey(), JSON.stringify(toStore));
-        }
-        catch (_e) {
-            // localStorage may be full or unavailable — not fatal
-        }
+        if (this._persistTimer !== null)
+            clearTimeout(this._persistTimer);
+        this._persistTimer = setTimeout(() => {
+            try {
+                const toStore = {
+                    zones: this._config.zones,
+                    furniture: this._config.furniture,
+                    color_scheme: this._config.color_scheme,
+                    sensor_position: this._config.sensor_position,
+                    max_range: this._config.max_range,
+                    fov_angle: this._config.fov_angle,
+                    show_grid: this._config.show_grid,
+                    show_sweep: this._config.show_sweep,
+                    show_trails: this._config.show_trails,
+                    trail_length: this._config.trail_length,
+                };
+                localStorage.setItem(this._storageKey(), JSON.stringify(toStore));
+            }
+            catch (_e) {
+                // localStorage may be full or unavailable — not fatal
+            }
+        }, 300);
     }
     /**
      * Load previously persisted card config from localStorage.
+     * Validates the parsed data before returning it.
      */
     _loadPersistedConfig() {
         try {
             const raw = localStorage.getItem(this._storageKey());
-            if (raw)
-                return JSON.parse(raw);
+            if (!raw)
+                return null;
+            const parsed = JSON.parse(raw);
+            // Basic validation: must be a non-null object
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+                return null;
+            // Validate zones array if present
+            if (parsed.zones !== undefined && !Array.isArray(parsed.zones))
+                return null;
+            // Validate furniture array if present
+            if (parsed.furniture !== undefined && !Array.isArray(parsed.furniture))
+                return null;
+            return parsed;
         }
         catch (_e) {
-            // ignore parse errors
+            // ignore parse errors or corrupted data
         }
         return null;
     }
