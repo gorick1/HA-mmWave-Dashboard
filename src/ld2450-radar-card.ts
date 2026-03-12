@@ -233,8 +233,6 @@ class LD2450RadarCard extends HTMLElement {
     const zones = this._zoneEditor?.getZones() ?? [];
     const targets = this._tracker?.getTargets() ?? [];
     const activeTargets = targets.filter(t => t.active);
-    const hasContent = zones.length > 0 || activeTargets.length > 0;
-    if (!hasContent) return '';
 
     return `
       <div class="status-bar" id="status-bar">

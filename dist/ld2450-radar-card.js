@@ -2514,9 +2514,6 @@ class LD2450RadarCard extends HTMLElement {
         const zones = (_b = (_a = this._zoneEditor) === null || _a === void 0 ? void 0 : _a.getZones()) !== null && _b !== void 0 ? _b : [];
         const targets = (_d = (_c = this._tracker) === null || _c === void 0 ? void 0 : _c.getTargets()) !== null && _d !== void 0 ? _d : [];
         const activeTargets = targets.filter(t => t.active);
-        const hasContent = zones.length > 0 || activeTargets.length > 0;
-        if (!hasContent)
-            return '';
         return `
       <div class="status-bar" id="status-bar">
         ${activeTargets.map(t => `
