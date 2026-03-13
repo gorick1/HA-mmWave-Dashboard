@@ -267,7 +267,7 @@ class LD2450RadarCard extends HTMLElement {
           <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
             <span class="chip-dot" style="background:${z.color}"></span>
             <span class="chip-label">${z.name}</span>
-            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+            <span class="chip-badge">${z.targetCount > 0 ? `${z.targetCount} ${z.targetCount === 1 ? 'person' : 'people'}` : 'Clear'}</span>
           </div>
         `).join('')}
       </div>
@@ -394,7 +394,7 @@ class LD2450RadarCard extends HTMLElement {
       this._config.zones = this._zoneEditor?.getZoneConfigs() ?? [];
       this._pushHistory();
 
-      // Create the input_boolean helper immediately so it is available
+      // Create the input_number helper immediately so it is available
       // for automations without requiring a separate Save click.
       // persistConfig is called inside the callback to include ha_entity.
       void this._ensureZoneHelper(zone).then(() => {
@@ -406,7 +406,7 @@ class LD2450RadarCard extends HTMLElement {
         this._persistConfig();
       });
 
-      this._dispatchZoneChange(zone.id, false);
+      this._dispatchZoneChange(zone.id, false, 0);
     }
     this._editMode = 'select';
     this._renderDOM();
@@ -617,16 +617,18 @@ class LD2450RadarCard extends HTMLElement {
       const zones = this._zoneEditor?.getZones() ?? [];
       const furniture = this._furnitureLayer?.getItems() ?? [];
 
-      // Update zone occupancy
-      const occupiedZones = this._tracker?.getOccupiedZones(zones) ?? new Set<string>();
-      this._zoneEditor?.updateOccupancy(occupiedZones);
+      // Update zone occupancy and target counts
+      const zoneCounts = this._tracker?.getZoneTargetCounts(zones) ?? new Map<string, number>();
+      this._zoneEditor?.updateOccupancy(zoneCounts);
 
-      // Dispatch zone change events
+      // Dispatch zone change events when occupancy or target count changes
       for (const zone of zones) {
+        const newCount = zoneCounts.get(zone.id) ?? 0;
+        const isNowOccupied = newCount > 0;
         const wasOccupied = zone.occupied;
-        const isNowOccupied = occupiedZones.has(zone.id);
-        if (wasOccupied !== isNowOccupied) {
-          this._dispatchZoneChange(zone.id, isNowOccupied);
+        const prevCount = zone.targetCount ?? 0;
+        if (wasOccupied !== isNowOccupied || prevCount !== newCount) {
+          this._dispatchZoneChange(zone.id, isNowOccupied, newCount);
         }
       }
 
@@ -680,7 +682,7 @@ class LD2450RadarCard extends HTMLElement {
           <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
             <span class="chip-dot" style="background:${z.color}"></span>
             <span class="chip-label">${z.name}</span>
-            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+            <span class="chip-badge">${z.targetCount > 0 ? `${z.targetCount} ${z.targetCount === 1 ? 'person' : 'people'}` : 'Clear'}</span>
           </div>
         `).join('')}
       `;
@@ -698,7 +700,7 @@ class LD2450RadarCard extends HTMLElement {
       const chip = statusBar.querySelector(`[data-zone-id="${z.id}"]`);
       if (chip) {
         const badge = chip.querySelector('.chip-badge');
-        if (badge) badge.textContent = z.occupied ? 'Occupied' : 'Clear';
+        if (badge) badge.textContent = z.targetCount > 0 ? `${z.targetCount} ${z.targetCount === 1 ? 'person' : 'people'}` : 'Clear';
         chip.className = `status-chip ${z.occupied ? 'active' : ''}`;
       }
     }
@@ -826,7 +828,7 @@ class LD2450RadarCard extends HTMLElement {
     // Persist config to localStorage (includes ha_entity references)
     this._persistConfig();
 
-    console.info('[LD2450RadarCard] Configuration saved — zones persisted and input_boolean helpers are ready for automations');
+    console.info('[LD2450RadarCard] Configuration saved — zones persisted and input_number helpers are ready for automations');
   }
 
   /**
@@ -844,18 +846,18 @@ class LD2450RadarCard extends HTMLElement {
   }
 
   /**
-   * Derive the input_boolean entity ID for a zone based on its name.
-   * Uses the same name format passed to input_boolean/create so that
+   * Derive the input_number entity ID for a zone based on its name.
+   * Uses the same name format passed to input_number/create so that
    * the computed entity ID matches the one HA auto-generates.
    *
    * E.g. device "living_room_radar", zone name "Kitchen"
    *   → name "Radar living_room_radar Zone Kitchen"
    *   → slug "radar_living_room_radar_zone_kitchen"
-   *   → input_boolean.radar_living_room_radar_zone_kitchen
+   *   → input_number.radar_living_room_radar_zone_kitchen
    */
   private _zoneEntityId(zoneName: string): string {
     const helperName = `Radar ${this._config.device_name} Zone ${zoneName}`;
-    return `input_boolean.${this._slugify(helperName)}`;
+    return `input_number.${this._slugify(helperName)}`;
   }
 
   /**
@@ -866,9 +868,10 @@ class LD2450RadarCard extends HTMLElement {
   }
 
   /**
-   * Create an input_boolean helper for a zone if one does not already exist.
+   * Create an input_number helper for a zone if one does not already exist.
+   * The helper tracks how many targets (0–3) are inside the zone.
    * Stores the resulting entity ID on zone.ha_entity so it can be used for
-   * state toggling and survives page reloads via localStorage.
+   * state updates and survives page reloads via localStorage.
    */
   private async _ensureZoneHelper(zone: ZoneConfig): Promise<void> {
     if (!this._hass) return;
@@ -885,12 +888,16 @@ class LD2450RadarCard extends HTMLElement {
     }
 
     try {
-      // Use callWS (the official HA frontend API) with a fallback to the
-      // lower-level connection.sendMessagePromise for resilience.
-      const msg = {
-        type: 'input_boolean/create',
+      const msg: { type: string; [key: string]: unknown } = {
+        type: 'input_number/create',
         name: this._zoneHelperName(zone.name),
         icon: 'mdi:motion-sensor',
+        min: 0,
+        max: 3,
+        step: 1,
+        mode: 'box',
+        initial: 0,
+        unit_of_measurement: 'people',
       };
 
       if (typeof this._hass.callWS === 'function') {
@@ -899,33 +906,34 @@ class LD2450RadarCard extends HTMLElement {
         await this._hass.connection.sendMessagePromise(msg);
       }
 
+      // Store the entity ID optimistically — HA may take a moment to
+      // register the entity in its state machine, but we know what the
+      // ID will be based on the helper name we just submitted.
       zone.ha_entity = entityId;
       console.info(`[LD2450RadarCard] Created helper: ${entityId}`);
     } catch (err: unknown) {
-      // Helper may already exist or the user may lack permission — not fatal.
-      // Check if the entity now exists in HA (race between creation and
-      // state propagation, or a "duplicate" error because it was created
-      // earlier).
-      if (this._hass && this._hass.states[entityId]) {
-        zone.ha_entity = entityId;
-      }
       const errMsg = err instanceof Error ? err.message : String(err);
+
+      // If the error indicates the helper already exists, record the entity
+      // ID anyway so we can use it for state updates.
+      zone.ha_entity = entityId;
       console.warn(
         `[LD2450RadarCard] Could not create helper for zone "${zone.name}" ` +
-        `(entity: ${entityId}): ${errMsg}`,
+        `(entity: ${entityId}): ${errMsg}. ` +
+        `Will attempt to use the entity ID for state updates anyway.`,
       );
     }
   }
 
-  private _dispatchZoneChange(zoneId: string, occupied: boolean): void {
+  private _dispatchZoneChange(zoneId: string, occupied: boolean, targetCount: number): void {
     // 1. Emit DOM event (for any in-page listeners)
     this.dispatchEvent(new CustomEvent('ld2450-zone-change', {
       bubbles: true,
       composed: true,
-      detail: { zoneId, occupied },
+      detail: { zoneId, occupied, targetCount },
     }));
 
-    // 2. Toggle the corresponding input_boolean helper in HA so that
+    // 2. Update the corresponding input_number helper in HA so that
     //    automations can trigger directly on state changes.
     if (this._hass) {
       const zone = this._config.zones.find(z => z.id === zoneId);
@@ -933,14 +941,13 @@ class LD2450RadarCard extends HTMLElement {
 
       // Prefer the stored ha_entity; fall back to computed entity ID
       const entityId = zone.ha_entity || this._zoneEntityId(zone.name);
-      if (this._hass.states[entityId]) {
-        const service = occupied ? 'turn_on' : 'turn_off';
-        this._hass.callService('input_boolean', service, {
-          entity_id: entityId,
-        }).catch((err) => {
-          console.warn(`[LD2450RadarCard] Failed to toggle ${entityId}:`, err);
-        });
-      }
+
+      this._hass.callService('input_number', 'set_value', {
+        entity_id: entityId,
+        value: targetCount,
+      }).catch((err) => {
+        console.warn(`[LD2450RadarCard] Failed to update ${entityId}:`, err);
+      });
     }
   }
 

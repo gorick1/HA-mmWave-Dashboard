@@ -1030,23 +1030,26 @@ class TargetTracker {
         return Array.from(this.targets.values());
     }
     /**
-     * Check which zones are occupied by any active target.
-     * Returns a Set of zone IDs that are occupied.
+     * Count how many active targets are inside each zone.
+     * Returns a Map of zone ID → target count.
      */
-    getOccupiedZones(zones) {
-        const occupied = new Set();
+    getZoneTargetCounts(zones) {
+        const counts = new Map();
         const activeTargets = Array.from(this.targets.values()).filter(t => t.active);
         for (const zone of zones) {
-            if (zone.vertices.length < 3)
+            if (zone.vertices.length < 3) {
+                counts.set(zone.id, 0);
                 continue;
+            }
+            let count = 0;
             for (const target of activeTargets) {
                 if (pointInPolygon({ x: target.x, y: target.y }, zone.vertices)) {
-                    occupied.add(zone.id);
-                    break;
+                    count++;
                 }
             }
+            counts.set(zone.id, count);
         }
-        return occupied;
+        return counts;
     }
 }
 
@@ -1379,7 +1382,7 @@ class ZoneEditor {
         this.dragZoneOffset = { x: 0, y: 0 };
         this.onZoneComplete = null;
         this.config = config;
-        this.zones = config.zones.map(z => ({ ...z, occupied: false, selectedVertexIndex: null, dragging: false }));
+        this.zones = config.zones.map(z => ({ ...z, occupied: false, targetCount: 0, selectedVertexIndex: null, dragging: false }));
     }
     get _sensorPosition() {
         var _a;
@@ -1389,12 +1392,13 @@ class ZoneEditor {
         this.config = config;
         const existingMap = new Map(this.zones.map(z => [z.id, z]));
         this.zones = config.zones.map(z => {
-            var _a, _b;
+            var _a, _b, _c;
             const existing = existingMap.get(z.id);
             return {
                 ...z,
                 occupied: (_a = existing === null || existing === void 0 ? void 0 : existing.occupied) !== null && _a !== void 0 ? _a : false,
-                selectedVertexIndex: (_b = existing === null || existing === void 0 ? void 0 : existing.selectedVertexIndex) !== null && _b !== void 0 ? _b : null,
+                targetCount: (_b = existing === null || existing === void 0 ? void 0 : existing.targetCount) !== null && _b !== void 0 ? _b : 0,
+                selectedVertexIndex: (_c = existing === null || existing === void 0 ? void 0 : existing.selectedVertexIndex) !== null && _c !== void 0 ? _c : null,
                 dragging: false,
             };
         });
@@ -1406,7 +1410,7 @@ class ZoneEditor {
         return this.zones;
     }
     getZoneConfigs() {
-        return this.zones.map(({ occupied: _o, selectedVertexIndex: _s, dragging: _d, dragStartOffset: _ds, ...rest }) => rest);
+        return this.zones.map(({ occupied: _o, targetCount: _tc, selectedVertexIndex: _s, dragging: _d, dragStartOffset: _ds, ...rest }) => rest);
     }
     isInDrawingMode() {
         return this.isDrawing;
@@ -1470,6 +1474,7 @@ class ZoneEditor {
         this.zones.push({
             ...zone,
             occupied: false,
+            targetCount: 0,
             selectedVertexIndex: null,
             dragging: false,
         });
@@ -1569,11 +1574,14 @@ class ZoneEditor {
         }
     }
     /**
-     * Update zone occupancy based on current target positions.
+     * Update zone occupancy and target counts based on current target positions.
      */
-    updateOccupancy(occupiedIds) {
+    updateOccupancy(zoneCounts) {
+        var _a;
         for (const zone of this.zones) {
-            zone.occupied = occupiedIds.has(zone.id);
+            const count = (_a = zoneCounts.get(zone.id)) !== null && _a !== void 0 ? _a : 0;
+            zone.targetCount = count;
+            zone.occupied = count > 0;
         }
     }
     /**
@@ -2500,7 +2508,7 @@ class LD2450RadarCard extends HTMLElement {
           <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
             <span class="chip-dot" style="background:${z.color}"></span>
             <span class="chip-label">${z.name}</span>
-            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+            <span class="chip-badge">${z.targetCount > 0 ? `${z.targetCount} ${z.targetCount === 1 ? 'person' : 'people'}` : 'Clear'}</span>
           </div>
         `).join('')}
       </div>
@@ -2625,7 +2633,7 @@ class LD2450RadarCard extends HTMLElement {
             this._zoneNamePending = null;
             this._config.zones = (_d = (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.getZoneConfigs()) !== null && _d !== void 0 ? _d : [];
             this._pushHistory();
-            // Create the input_boolean helper immediately so it is available
+            // Create the input_number helper immediately so it is available
             // for automations without requiring a separate Save click.
             // persistConfig is called inside the callback to include ha_entity.
             void this._ensureZoneHelper(zone).then(() => {
@@ -2636,7 +2644,7 @@ class LD2450RadarCard extends HTMLElement {
                 }
                 this._persistConfig();
             });
-            this._dispatchZoneChange(zone.id, false);
+            this._dispatchZoneChange(zone.id, false, 0);
         }
         this._editMode = 'select';
         this._renderDOM();
@@ -2830,7 +2838,7 @@ class LD2450RadarCard extends HTMLElement {
     }
     _startRenderLoop() {
         const loop = () => {
-            var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m;
+            var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p;
             const canvas = this._shadow.querySelector('#radar-canvas');
             if (!canvas || !this._radarCanvas) {
                 this._rafId = requestAnimationFrame(loop);
@@ -2839,20 +2847,22 @@ class LD2450RadarCard extends HTMLElement {
             const targets = (_b = (_a = this._tracker) === null || _a === void 0 ? void 0 : _a.getTargets()) !== null && _b !== void 0 ? _b : [];
             const zones = (_d = (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.getZones()) !== null && _d !== void 0 ? _d : [];
             const furniture = (_g = (_f = this._furnitureLayer) === null || _f === void 0 ? void 0 : _f.getItems()) !== null && _g !== void 0 ? _g : [];
-            // Update zone occupancy
-            const occupiedZones = (_j = (_h = this._tracker) === null || _h === void 0 ? void 0 : _h.getOccupiedZones(zones)) !== null && _j !== void 0 ? _j : new Set();
-            (_k = this._zoneEditor) === null || _k === void 0 ? void 0 : _k.updateOccupancy(occupiedZones);
-            // Dispatch zone change events
+            // Update zone occupancy and target counts
+            const zoneCounts = (_j = (_h = this._tracker) === null || _h === void 0 ? void 0 : _h.getZoneTargetCounts(zones)) !== null && _j !== void 0 ? _j : new Map();
+            (_k = this._zoneEditor) === null || _k === void 0 ? void 0 : _k.updateOccupancy(zoneCounts);
+            // Dispatch zone change events when occupancy or target count changes
             for (const zone of zones) {
+                const newCount = (_l = zoneCounts.get(zone.id)) !== null && _l !== void 0 ? _l : 0;
+                const isNowOccupied = newCount > 0;
                 const wasOccupied = zone.occupied;
-                const isNowOccupied = occupiedZones.has(zone.id);
-                if (wasOccupied !== isNowOccupied) {
-                    this._dispatchZoneChange(zone.id, isNowOccupied);
+                const prevCount = (_m = zone.targetCount) !== null && _m !== void 0 ? _m : 0;
+                if (wasOccupied !== isNowOccupied || prevCount !== newCount) {
+                    this._dispatchZoneChange(zone.id, isNowOccupied, newCount);
                 }
             }
             const drawingState = {
                 mode: this._editMode,
-                zoneVertices: (_m = (_l = this._zoneEditor) === null || _l === void 0 ? void 0 : _l.getDrawingVertices()) !== null && _m !== void 0 ? _m : [],
+                zoneVertices: (_p = (_o = this._zoneEditor) === null || _o === void 0 ? void 0 : _o.getDrawingVertices()) !== null && _p !== void 0 ? _p : [],
                 mousePos: this._drawMousePos,
                 hoveredVertexIndex: this._drawHoveredVertex,
             };
@@ -2895,7 +2905,7 @@ class LD2450RadarCard extends HTMLElement {
           <div class="status-chip ${z.occupied ? 'active' : ''}" data-zone-id="${z.id}">
             <span class="chip-dot" style="background:${z.color}"></span>
             <span class="chip-label">${z.name}</span>
-            <span class="chip-badge">${z.occupied ? 'Occupied' : 'Clear'}</span>
+            <span class="chip-badge">${z.targetCount > 0 ? `${z.targetCount} ${z.targetCount === 1 ? 'person' : 'people'}` : 'Clear'}</span>
           </div>
         `).join('')}
       `;
@@ -2913,7 +2923,7 @@ class LD2450RadarCard extends HTMLElement {
             if (chip) {
                 const badge = chip.querySelector('.chip-badge');
                 if (badge)
-                    badge.textContent = z.occupied ? 'Occupied' : 'Clear';
+                    badge.textContent = z.targetCount > 0 ? `${z.targetCount} ${z.targetCount === 1 ? 'person' : 'people'}` : 'Clear';
                 chip.className = `status-chip ${z.occupied ? 'active' : ''}`;
             }
         }
@@ -3033,7 +3043,7 @@ class LD2450RadarCard extends HTMLElement {
         }
         // Persist config to localStorage (includes ha_entity references)
         this._persistConfig();
-        console.info('[LD2450RadarCard] Configuration saved — zones persisted and input_boolean helpers are ready for automations');
+        console.info('[LD2450RadarCard] Configuration saved — zones persisted and input_number helpers are ready for automations');
     }
     /**
      * Slugify a string to match Home Assistant's slug generation.
@@ -3049,18 +3059,18 @@ class LD2450RadarCard extends HTMLElement {
             .replace(/^_|_$/g, '');
     }
     /**
-     * Derive the input_boolean entity ID for a zone based on its name.
-     * Uses the same name format passed to input_boolean/create so that
+     * Derive the input_number entity ID for a zone based on its name.
+     * Uses the same name format passed to input_number/create so that
      * the computed entity ID matches the one HA auto-generates.
      *
      * E.g. device "living_room_radar", zone name "Kitchen"
      *   → name "Radar living_room_radar Zone Kitchen"
      *   → slug "radar_living_room_radar_zone_kitchen"
-     *   → input_boolean.radar_living_room_radar_zone_kitchen
+     *   → input_number.radar_living_room_radar_zone_kitchen
      */
     _zoneEntityId(zoneName) {
         const helperName = `Radar ${this._config.device_name} Zone ${zoneName}`;
-        return `input_boolean.${this._slugify(helperName)}`;
+        return `input_number.${this._slugify(helperName)}`;
     }
     /**
      * Build the helper display name for a zone.
@@ -3069,9 +3079,10 @@ class LD2450RadarCard extends HTMLElement {
         return `Radar ${this._config.device_name} Zone ${zoneName}`;
     }
     /**
-     * Create an input_boolean helper for a zone if one does not already exist.
+     * Create an input_number helper for a zone if one does not already exist.
+     * The helper tracks how many targets (0–3) are inside the zone.
      * Stores the resulting entity ID on zone.ha_entity so it can be used for
-     * state toggling and survives page reloads via localStorage.
+     * state updates and survives page reloads via localStorage.
      */
     async _ensureZoneHelper(zone) {
         if (!this._hass)
@@ -3086,12 +3097,16 @@ class LD2450RadarCard extends HTMLElement {
             return;
         }
         try {
-            // Use callWS (the official HA frontend API) with a fallback to the
-            // lower-level connection.sendMessagePromise for resilience.
             const msg = {
-                type: 'input_boolean/create',
+                type: 'input_number/create',
                 name: this._zoneHelperName(zone.name),
                 icon: 'mdi:motion-sensor',
+                min: 0,
+                max: 3,
+                step: 1,
+                mode: 'box',
+                initial: 0,
+                unit_of_measurement: 'people',
             };
             if (typeof this._hass.callWS === 'function') {
                 await this._hass.callWS(msg);
@@ -3099,30 +3114,30 @@ class LD2450RadarCard extends HTMLElement {
             else {
                 await this._hass.connection.sendMessagePromise(msg);
             }
+            // Store the entity ID optimistically — HA may take a moment to
+            // register the entity in its state machine, but we know what the
+            // ID will be based on the helper name we just submitted.
             zone.ha_entity = entityId;
             console.info(`[LD2450RadarCard] Created helper: ${entityId}`);
         }
         catch (err) {
-            // Helper may already exist or the user may lack permission — not fatal.
-            // Check if the entity now exists in HA (race between creation and
-            // state propagation, or a "duplicate" error because it was created
-            // earlier).
-            if (this._hass && this._hass.states[entityId]) {
-                zone.ha_entity = entityId;
-            }
             const errMsg = err instanceof Error ? err.message : String(err);
+            // If the error indicates the helper already exists, record the entity
+            // ID anyway so we can use it for state updates.
+            zone.ha_entity = entityId;
             console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}" ` +
-                `(entity: ${entityId}): ${errMsg}`);
+                `(entity: ${entityId}): ${errMsg}. ` +
+                `Will attempt to use the entity ID for state updates anyway.`);
         }
     }
-    _dispatchZoneChange(zoneId, occupied) {
+    _dispatchZoneChange(zoneId, occupied, targetCount) {
         // 1. Emit DOM event (for any in-page listeners)
         this.dispatchEvent(new CustomEvent('ld2450-zone-change', {
             bubbles: true,
             composed: true,
-            detail: { zoneId, occupied },
+            detail: { zoneId, occupied, targetCount },
         }));
-        // 2. Toggle the corresponding input_boolean helper in HA so that
+        // 2. Update the corresponding input_number helper in HA so that
         //    automations can trigger directly on state changes.
         if (this._hass) {
             const zone = this._config.zones.find(z => z.id === zoneId);
@@ -3130,14 +3145,12 @@ class LD2450RadarCard extends HTMLElement {
                 return;
             // Prefer the stored ha_entity; fall back to computed entity ID
             const entityId = zone.ha_entity || this._zoneEntityId(zone.name);
-            if (this._hass.states[entityId]) {
-                const service = occupied ? 'turn_on' : 'turn_off';
-                this._hass.callService('input_boolean', service, {
-                    entity_id: entityId,
-                }).catch((err) => {
-                    console.warn(`[LD2450RadarCard] Failed to toggle ${entityId}:`, err);
-                });
-            }
+            this._hass.callService('input_number', 'set_value', {
+                entity_id: entityId,
+                value: targetCount,
+            }).catch((err) => {
+                console.warn(`[LD2450RadarCard] Failed to update ${entityId}:`, err);
+            });
         }
     }
     /**

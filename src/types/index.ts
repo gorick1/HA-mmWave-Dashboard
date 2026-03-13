@@ -56,6 +56,7 @@ export interface ZoneConfig {
 
 export interface ZoneState extends ZoneConfig {
   occupied: boolean;
+  targetCount: number;
   selectedVertexIndex: number | null;
   dragging: boolean;
   dragStartOffset?: Point;

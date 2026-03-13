@@ -115,24 +115,28 @@ export class TargetTracker {
   }
 
   /**
-   * Check which zones are occupied by any active target.
-   * Returns a Set of zone IDs that are occupied.
+   * Count how many active targets are inside each zone.
+   * Returns a Map of zone ID → target count.
    */
-  getOccupiedZones(
+  getZoneTargetCounts(
     zones: Array<{ id: string; vertices: Point[] }>
-  ): Set<string> {
-    const occupied = new Set<string>();
+  ): Map<string, number> {
+    const counts = new Map<string, number>();
     const activeTargets = Array.from(this.targets.values()).filter(t => t.active);
 
     for (const zone of zones) {
-      if (zone.vertices.length < 3) continue;
+      if (zone.vertices.length < 3) {
+        counts.set(zone.id, 0);
+        continue;
+      }
+      let count = 0;
       for (const target of activeTargets) {
         if (pointInPolygon({ x: target.x, y: target.y }, zone.vertices)) {
-          occupied.add(zone.id);
-          break;
+          count++;
         }
       }
+      counts.set(zone.id, count);
     }
-    return occupied;
+    return counts;
   }
 }
