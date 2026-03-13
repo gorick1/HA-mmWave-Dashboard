@@ -3122,12 +3122,21 @@ class LD2450RadarCard extends HTMLElement {
         }
         catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            // If the error indicates the helper already exists, record the entity
-            // ID anyway so we can use it for state updates.
-            zone.ha_entity = entityId;
+            // Store the entity ID optimistically — the most common failure is that
+            // the helper already exists (duplicate name).  In that case, we still
+            // want to update its value.  If it truly doesn't exist (permission
+            // error, etc.), the subsequent set_value call will fail gracefully with
+            // its own catch handler.
+            if (this._hass && this._hass.states[entityId]) {
+                zone.ha_entity = entityId;
+            }
+            else {
+                // Optimistic: store it anyway so we attempt updates on next cycle;
+                // the entity may appear once HA finishes propagating.
+                zone.ha_entity = entityId;
+            }
             console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}" ` +
-                `(entity: ${entityId}): ${errMsg}. ` +
-                `Will attempt to use the entity ID for state updates anyway.`);
+                `(entity: ${entityId}): ${errMsg}`);
         }
     }
     _dispatchZoneChange(zoneId, occupied, targetCount) {
