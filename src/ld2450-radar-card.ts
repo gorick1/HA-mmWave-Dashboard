@@ -396,6 +396,7 @@ class LD2450RadarCard extends HTMLElement {
 
       // Create the input_boolean helper immediately so it is available
       // for automations without requiring a separate Save click.
+      // persistConfig is called inside the callback to include ha_entity.
       void this._ensureZoneHelper(zone).then(() => {
         // Sync the ha_entity back into the config zones array
         const cfgZone = this._config.zones.find(z => z.id === zone.id);
@@ -405,7 +406,6 @@ class LD2450RadarCard extends HTMLElement {
         this._persistConfig();
       });
 
-      this._persistConfig();
       this._dispatchZoneChange(zone.id, false);
     }
     this._editMode = 'select';
@@ -895,8 +895,11 @@ class LD2450RadarCard extends HTMLElement {
       console.info(`[LD2450RadarCard] Created helper: ${entityId}`);
     } catch (_e) {
       // Helper may already exist or the user may lack permission — not fatal.
-      // Still record the expected entity ID so toggling can be attempted.
-      zone.ha_entity = entityId;
+      // Only record the entity ID if the helper actually exists in HA state
+      // (i.e. it was created previously and we hit a "duplicate" error).
+      if (this._hass && this._hass.states[entityId]) {
+        zone.ha_entity = entityId;
+      }
       console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}" (may already exist):`, _e);
     }
   }
