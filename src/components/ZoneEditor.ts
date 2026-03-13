@@ -30,7 +30,7 @@ export class ZoneEditor {
 
   constructor(config: CardConfig) {
     this.config = config;
-    this.zones = config.zones.map(z => ({ ...z, occupied: false, selectedVertexIndex: null, dragging: false }));
+    this.zones = config.zones.map(z => ({ ...z, occupied: false, targetCount: 0, selectedVertexIndex: null, dragging: false }));
   }
 
   private get _sensorPosition() {
@@ -45,6 +45,7 @@ export class ZoneEditor {
       return {
         ...z,
         occupied: existing?.occupied ?? false,
+        targetCount: existing?.targetCount ?? 0,
         selectedVertexIndex: existing?.selectedVertexIndex ?? null,
         dragging: false,
       };
@@ -60,7 +61,7 @@ export class ZoneEditor {
   }
 
   getZoneConfigs(): ZoneConfig[] {
-    return this.zones.map(({ occupied: _o, selectedVertexIndex: _s, dragging: _d, dragStartOffset: _ds, ...rest }) => rest);
+    return this.zones.map(({ occupied: _o, targetCount: _tc, selectedVertexIndex: _s, dragging: _d, dragStartOffset: _ds, ...rest }) => rest);
   }
 
   isInDrawingMode(): boolean {
@@ -147,6 +148,7 @@ export class ZoneEditor {
     this.zones.push({
       ...zone,
       occupied: false,
+      targetCount: 0,
       selectedVertexIndex: null,
       dragging: false,
     });
@@ -275,11 +277,13 @@ export class ZoneEditor {
   }
 
   /**
-   * Update zone occupancy based on current target positions.
+   * Update zone occupancy and target counts based on current target positions.
    */
-  updateOccupancy(occupiedIds: Set<string>): void {
+  updateOccupancy(zoneCounts: Map<string, number>): void {
     for (const zone of this.zones) {
-      zone.occupied = occupiedIds.has(zone.id);
+      const count = zoneCounts.get(zone.id) ?? 0;
+      zone.targetCount = count;
+      zone.occupied = count > 0;
     }
   }
 
