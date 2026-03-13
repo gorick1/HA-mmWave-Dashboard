@@ -102,6 +102,8 @@ export interface HomeAssistant {
   states: Record<string, HassEntity>;
   connection: HassConnection;
   callService: (domain: string, service: string, data: Record<string, unknown>) => Promise<void>;
+  /** Send a WebSocket command and return the result (official HA frontend API). */
+  callWS: <T = unknown>(msg: { type: string; [key: string]: unknown }) => Promise<T>;
   user: { name: string };
 }
 
@@ -118,9 +120,9 @@ export interface HassConnection {
     callback: (msg: unknown) => void,
     subscribeMessage: { type: string; entity_ids?: string[] }
   ) => Promise<() => void>;
-  sendMessageWithResult: (
+  sendMessagePromise: <T = unknown>(
     message: { type: string; [key: string]: unknown }
-  ) => Promise<unknown>;
+  ) => Promise<T>;
 }
 
 export interface EntityStateChangedMessage {
