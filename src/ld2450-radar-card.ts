@@ -831,16 +831,15 @@ class LD2450RadarCard extends HTMLElement {
 
   /**
    * Slugify a string to match Home Assistant's slug generation.
-   * Lowercases, replaces whitespace with underscores, removes non-alphanumeric
-   * characters (except underscores), collapses consecutive underscores, and
-   * strips leading/trailing underscores.
+   * Lowercases, replaces sequences of non-alphanumeric characters with a
+   * single underscore, and strips leading/trailing underscores.  This mirrors
+   * the Python ``slugify()`` used by HA so computed entity IDs match the ones
+   * HA auto-generates when creating helpers.
    */
   private _slugify(text: string): string {
     return text
       .toLowerCase()
-      .replace(/\s+/g, '_')
-      .replace(/[^a-z0-9_]/g, '')
-      .replace(/_+/g, '_')
+      .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_|_$/g, '');
   }
 
@@ -886,21 +885,35 @@ class LD2450RadarCard extends HTMLElement {
     }
 
     try {
-      await this._hass.connection.sendMessageWithResult({
-        type: 'input_boolean/create',
+      // Use callWS (the official HA frontend API) with a fallback to the
+      // lower-level connection.sendMessagePromise for resilience.
+      const msg = {
+        type: 'input_boolean/create' as const,
         name: this._zoneHelperName(zone.name),
         icon: 'mdi:motion-sensor',
-      });
+      };
+
+      if (typeof this._hass.callWS === 'function') {
+        await this._hass.callWS(msg);
+      } else {
+        await this._hass.connection.sendMessagePromise(msg);
+      }
+
       zone.ha_entity = entityId;
       console.info(`[LD2450RadarCard] Created helper: ${entityId}`);
-    } catch (_e) {
+    } catch (err: unknown) {
       // Helper may already exist or the user may lack permission — not fatal.
-      // Only record the entity ID if the helper actually exists in HA state
-      // (i.e. it was created previously and we hit a "duplicate" error).
+      // Check if the entity now exists in HA (race between creation and
+      // state propagation, or a "duplicate" error because it was created
+      // earlier).
       if (this._hass && this._hass.states[entityId]) {
         zone.ha_entity = entityId;
       }
-      console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}" (may already exist):`, _e);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[LD2450RadarCard] Could not create helper for zone "${zone.name}" ` +
+        `(entity: ${entityId}): ${errMsg}`,
+      );
     }
   }
 
