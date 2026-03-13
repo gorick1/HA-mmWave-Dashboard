@@ -888,7 +888,7 @@ class LD2450RadarCard extends HTMLElement {
       // Use callWS (the official HA frontend API) with a fallback to the
       // lower-level connection.sendMessagePromise for resilience.
       const msg = {
-        type: 'input_boolean/create' as const,
+        type: 'input_boolean/create',
         name: this._zoneHelperName(zone.name),
         icon: 'mdi:motion-sensor',
       };
