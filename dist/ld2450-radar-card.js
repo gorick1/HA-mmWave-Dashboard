@@ -1486,6 +1486,9 @@ class ZoneEditor {
         if (this.selectedZoneId === zoneId)
             this.selectedZoneId = null;
     }
+    getSelectedZoneId() {
+        return this.selectedZoneId;
+    }
     /**
      * Handle mouse down in select mode.
      * Returns true if the event was consumed.
@@ -1594,64 +1597,6 @@ const POSITION_LABELS = {
     'top-left': 'Top-Left Corner',
     'top-right': 'Top-Right Corner',
 };
-/**
- * Generate HA template sensor YAML for all zones.
- */
-function generateZoneYaml(config) {
-    if (config.zones.length === 0) {
-        return '# No zones defined yet.';
-    }
-    const deviceName = config.device_name;
-    const targetIds = config.targets.map(t => t.id);
-    let yaml = 'template:\n  - binary_sensor:\n';
-    for (const zone of config.zones) {
-        const uniqueId = zone.id.replace(/[^a-z0-9_]/gi, '_');
-        const zoneName = zone.name;
-        yaml += `      - name: "Radar Zone ${zoneName}"\n`;
-        yaml += `        unique_id: ${uniqueId}\n`;
-        yaml += `        device_class: occupancy\n`;
-        yaml += `        state: >\n`;
-        // Emit set statements for each target X/Y
-        for (const tid of targetIds) {
-            yaml += `          {% set t${tid}x = states('sensor.${deviceName}_target_${tid}_x') | float(0) %}\n`;
-            yaml += `          {% set t${tid}y = states('sensor.${deviceName}_target_${tid}_y') | float(0) %}\n`;
-        }
-        // Build PIP expression for each target
-        const targetExprs = targetIds.map(tid => {
-            return `(${_buildPIPJinja(zone, `t${tid}x`, `t${tid}y`)})`;
-        });
-        yaml += `          {{ ${targetExprs.join(' or ')} }}\n`;
-        yaml += '\n';
-    }
-    return yaml.trimEnd();
-}
-/**
- * Build a Jinja2 point-in-polygon expression for a zone polygon.
- * Uses the ray-casting algorithm unrolled into explicit math.
- */
-function _buildPIPJinja(zone, xVar, yVar) {
-    const poly = zone.vertices;
-    const n = poly.length;
-    if (n < 3)
-        return 'false';
-    const checks = [];
-    for (let i = 0, j = n - 1; i < n; j = i++) {
-        const xi = poly[i].x;
-        const yi = poly[i].y;
-        const xj = poly[j].x;
-        const yj = poly[j].y;
-        // Condition: (yi > py) != (yj > py) and px < (xj-xi)*(py-yi)/(yj-yi)+xi
-        const cond1 = `((${yi} > ${yVar}) != (${yj} > ${yVar}))`;
-        const cond2 = `(${xVar} < ((${xj} - ${xi}) * (${yVar} - ${yi}) / (${yj} - ${yi}) + ${xi}))`;
-        checks.push(`(${cond1} and ${cond2})`);
-    }
-    // XOR chain — fold with exclusive-or semantics
-    // Jinja2 doesn't have xor, so we compute the modulo 2 sum
-    if (checks.length === 1)
-        return checks[0];
-    // Use a counter approach: sum all intersections, odd = inside
-    return `(${checks.join(' | int(0) + ')} | int(0)) % 2 == 1`;
-}
 /**
  * ConfigEditor renders the settings panel HTML.
  */
@@ -2345,7 +2290,6 @@ class LD2450RadarCard extends HTMLElement {
         this._resizeObserver = null;
         this._editMode = 'none';
         this._showSettings = false;
-        this._showYaml = false;
         this._selectedFurnitureType = null;
         this._isEditMode = false;
         this._history = [];
@@ -2358,6 +2302,8 @@ class LD2450RadarCard extends HTMLElement {
         this._drawMousePos = null;
         // Index of the hovered drawing vertex (0 = first vertex, for close-polygon indicator)
         this._drawHoveredVertex = null;
+        // Debounce timer for localStorage writes
+        this._persistTimer = null;
         this._shadow = this.attachShadow({ mode: 'open' });
     }
     // Called by HA to set the card config
@@ -2371,6 +2317,30 @@ class LD2450RadarCard extends HTMLElement {
             this._config.furniture = [];
         if (!this._config.zones)
             this._config.zones = [];
+        // Restore persisted state (zones, furniture, settings) from localStorage
+        const stored = this._loadPersistedConfig();
+        if (stored) {
+            if (stored.zones && stored.zones.length)
+                this._config.zones = stored.zones;
+            if (stored.furniture && stored.furniture.length)
+                this._config.furniture = stored.furniture;
+            if (stored.color_scheme !== undefined)
+                this._config.color_scheme = stored.color_scheme;
+            if (stored.sensor_position !== undefined)
+                this._config.sensor_position = stored.sensor_position;
+            if (stored.max_range !== undefined)
+                this._config.max_range = stored.max_range;
+            if (stored.fov_angle !== undefined)
+                this._config.fov_angle = stored.fov_angle;
+            if (stored.show_grid !== undefined)
+                this._config.show_grid = stored.show_grid;
+            if (stored.show_sweep !== undefined)
+                this._config.show_sweep = stored.show_sweep;
+            if (stored.show_trails !== undefined)
+                this._config.show_trails = stored.show_trails;
+            if (stored.trail_length !== undefined)
+                this._config.trail_length = stored.trail_length;
+        }
         this._applyColorScheme();
         this._init();
     }
@@ -2416,6 +2386,7 @@ class LD2450RadarCard extends HTMLElement {
         this._applyColorScheme();
         (_a = this._radarCanvas) === null || _a === void 0 ? void 0 : _a.updateConfig(this._config);
         (_b = this._radarCanvas) === null || _b === void 0 ? void 0 : _b.markDirty();
+        this._persistConfig();
         this._renderDOM();
         this._setupCanvas();
     }
@@ -2450,7 +2421,6 @@ class LD2450RadarCard extends HTMLElement {
             <div class="tooltip" id="coord-tooltip" style="display:none"></div>
             ${this._zoneNamePending ? this._renderZoneNameDialog() : ''}
             ${this._showSettings ? this._renderSettingsPanel() : ''}
-            ${this._showYaml ? this._renderYamlPanel() : ''}
           </div>
           ${this._renderStatusBar()}
         </div>
@@ -2497,12 +2467,15 @@ class LD2450RadarCard extends HTMLElement {
         </div>
         <div class="toolbar-separator"></div>
         <div class="toolbar-group">
+          <button class="icon-btn" id="btn-delete" aria-label="Delete selected" title="Delete selected zone or furniture">🗑️ Delete</button>
+        </div>
+        <div class="toolbar-separator"></div>
+        <div class="toolbar-group">
           <button class="icon-btn" id="btn-undo" aria-label="Undo" ${this._historyIndex <= 0 ? 'disabled' : ''}>↩</button>
           <button class="icon-btn" id="btn-redo" aria-label="Redo" ${this._historyIndex >= this._history.length - 1 ? 'disabled' : ''}>↪</button>
         </div>
         <div class="toolbar-separator"></div>
         <div class="toolbar-group">
-          <button class="icon-btn" id="btn-export-yaml" aria-label="Export zone YAML">📋 YAML</button>
           <button class="icon-btn" id="btn-save" aria-label="Save">💾 Save</button>
         </div>
       </div>
@@ -2547,21 +2520,6 @@ class LD2450RadarCard extends HTMLElement {
       </div>
     `;
     }
-    _renderYamlPanel() {
-        const yaml = generateZoneYaml(this._config);
-        return `
-      <div class="yaml-overlay" id="yaml-panel">
-        <div class="yaml-header">
-          <h3>Zone Template YAML</h3>
-          <button class="icon-btn" id="btn-close-yaml" aria-label="Close YAML export">✕</button>
-        </div>
-        <div class="yaml-block">
-          <button class="copy-btn" id="btn-copy-yaml" aria-label="Copy YAML">Copy</button>
-          <pre class="yaml-code" id="yaml-content">${this._escapeHtml(yaml)}</pre>
-        </div>
-      </div>
-    `;
-    }
     _renderZoneNameDialog() {
         var _a, _b;
         return `
@@ -2579,7 +2537,7 @@ class LD2450RadarCard extends HTMLElement {
     `;
     }
     _attachEventListeners() {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k;
         const $ = (id) => this._shadow.getElementById(id);
         (_a = $('btn-edit')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', () => {
             this._isEditMode = !this._isEditMode;
@@ -2604,25 +2562,12 @@ class LD2450RadarCard extends HTMLElement {
             this._renderDOM();
             this._setupCanvas();
         });
-        (_d = $('btn-close-yaml')) === null || _d === void 0 ? void 0 : _d.addEventListener('click', () => {
-            this._showYaml = false;
-            this._renderDOM();
-            this._setupCanvas();
+        (_d = $('btn-undo')) === null || _d === void 0 ? void 0 : _d.addEventListener('click', () => this._undo());
+        (_f = $('btn-redo')) === null || _f === void 0 ? void 0 : _f.addEventListener('click', () => this._redo());
+        (_g = $('btn-save')) === null || _g === void 0 ? void 0 : _g.addEventListener('click', () => void this._save());
+        (_h = $('btn-delete')) === null || _h === void 0 ? void 0 : _h.addEventListener('click', () => {
+            this._deleteSelected();
         });
-        (_f = $('btn-copy-yaml')) === null || _f === void 0 ? void 0 : _f.addEventListener('click', () => {
-            var _a;
-            const pre = $('yaml-content');
-            if (pre)
-                void navigator.clipboard.writeText((_a = pre.textContent) !== null && _a !== void 0 ? _a : '');
-        });
-        (_g = $('btn-export-yaml')) === null || _g === void 0 ? void 0 : _g.addEventListener('click', () => {
-            this._showYaml = true;
-            this._renderDOM();
-            this._setupCanvas();
-        });
-        (_h = $('btn-undo')) === null || _h === void 0 ? void 0 : _h.addEventListener('click', () => this._undo());
-        (_j = $('btn-redo')) === null || _j === void 0 ? void 0 : _j.addEventListener('click', () => this._redo());
-        (_k = $('btn-save')) === null || _k === void 0 ? void 0 : _k.addEventListener('click', () => void this._save());
         // Edit mode toolbar buttons
         this._shadow.querySelectorAll('[data-mode]').forEach(el => {
             el.addEventListener('click', () => {
@@ -2649,8 +2594,8 @@ class LD2450RadarCard extends HTMLElement {
             });
         });
         // Zone name dialog
-        (_l = $('btn-confirm-zone')) === null || _l === void 0 ? void 0 : _l.addEventListener('click', () => this._confirmZoneName());
-        (_m = $('btn-cancel-zone')) === null || _m === void 0 ? void 0 : _m.addEventListener('click', () => {
+        (_j = $('btn-confirm-zone')) === null || _j === void 0 ? void 0 : _j.addEventListener('click', () => this._confirmZoneName());
+        (_k = $('btn-cancel-zone')) === null || _k === void 0 ? void 0 : _k.addEventListener('click', () => {
             this._zoneNamePending = null;
             this._renderDOM();
             this._setupCanvas();
@@ -2680,6 +2625,7 @@ class LD2450RadarCard extends HTMLElement {
             this._zoneNamePending = null;
             this._config.zones = (_d = (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.getZoneConfigs()) !== null && _d !== void 0 ? _d : [];
             this._pushHistory();
+            this._persistConfig();
             this._dispatchZoneChange(zone.id, false);
         }
         this._editMode = 'select';
@@ -2809,6 +2755,7 @@ class LD2450RadarCard extends HTMLElement {
                     this._editMode = 'select';
                 }
                 this._config.furniture = (_d = (_c = this._furnitureLayer) === null || _c === void 0 ? void 0 : _c.getFurnitureConfigs()) !== null && _d !== void 0 ? _d : [];
+                this._persistConfig();
                 (_f = this._radarCanvas) === null || _f === void 0 ? void 0 : _f.markDirty();
                 // Re-render toolbar to reflect mode change
                 this._renderDOM();
@@ -2831,6 +2778,7 @@ class LD2450RadarCard extends HTMLElement {
             (_b = this._zoneEditor) === null || _b === void 0 ? void 0 : _b.onMouseUp();
             this._config.furniture = (_d = (_c = this._furnitureLayer) === null || _c === void 0 ? void 0 : _c.getFurnitureConfigs()) !== null && _d !== void 0 ? _d : [];
             this._config.zones = (_g = (_f = this._zoneEditor) === null || _f === void 0 ? void 0 : _f.getZoneConfigs()) !== null && _g !== void 0 ? _g : [];
+            this._persistConfig();
         });
         newCanvas.addEventListener('dblclick', (e) => {
             var _a;
@@ -2841,17 +2789,14 @@ class LD2450RadarCard extends HTMLElement {
             }
         });
         newCanvas.addEventListener('keydown', (e) => {
-            var _a, _b, _c, _d, _f, _g;
+            var _a, _b;
             if (e.key === 'Enter' && this._editMode === 'draw-zone') {
                 const closed = (_a = this._zoneEditor) === null || _a === void 0 ? void 0 : _a.finishDrawing();
                 if (closed)
                     (_b = this._radarCanvas) === null || _b === void 0 ? void 0 : _b.markDirty();
             }
             if ((e.key === 'Delete' || e.key === 'Backspace') && this._editMode === 'select') {
-                this._pushHistory();
-                (_c = this._furnitureLayer) === null || _c === void 0 ? void 0 : _c.deleteSelected();
-                this._config.furniture = (_f = (_d = this._furnitureLayer) === null || _d === void 0 ? void 0 : _d.getFurnitureConfigs()) !== null && _f !== void 0 ? _f : [];
-                (_g = this._radarCanvas) === null || _g === void 0 ? void 0 : _g.markDirty();
+                this._deleteSelected();
             }
         });
         newCanvas.setAttribute('tabindex', '0');
@@ -3036,6 +2981,7 @@ class LD2450RadarCard extends HTMLElement {
         (_d = this._furnitureLayer) === null || _d === void 0 ? void 0 : _d.updateConfig(this._config);
         (_f = this._configEditor) === null || _f === void 0 ? void 0 : _f.updateConfig(this._config);
         (_g = this._radarCanvas) === null || _g === void 0 ? void 0 : _g.markDirty();
+        this._persistConfig();
     }
     _pushHistory() {
         // Trim forward history
@@ -3064,12 +3010,15 @@ class LD2450RadarCard extends HTMLElement {
         this._config.zones = entry.zones;
         (_a = this._furnitureLayer) === null || _a === void 0 ? void 0 : _a.updateConfig(this._config);
         (_b = this._zoneEditor) === null || _b === void 0 ? void 0 : _b.updateConfig(this._config);
+        this._persistConfig();
         this._renderDOM();
         this._setupCanvas();
     }
     async _save() {
         if (!this._hass)
             return;
+        // Persist config to localStorage
+        this._persistConfig();
         // For each zone, create an input_boolean helper (if it doesn't already exist)
         // so automations can trigger on zone occupancy changes.
         for (const zone of this._config.zones) {
@@ -3087,7 +3036,7 @@ class LD2450RadarCard extends HTMLElement {
                 console.warn(`[LD2450RadarCard] Could not create helper for zone "${zone.name}" (may already exist):`, _e);
             }
         }
-        console.info('[LD2450RadarCard] Zones saved — input_boolean helpers are ready for automations');
+        console.info('[LD2450RadarCard] Configuration saved — zones persisted and input_boolean helpers are ready for automations');
     }
     /**
      * Derive the input_boolean entity ID for a zone.
@@ -3120,6 +3069,89 @@ class LD2450RadarCard extends HTMLElement {
                 });
             }
         }
+    }
+    /**
+     * Delete the currently selected zone or furniture item.
+     * Zone deletion takes priority — furniture is only deleted
+     * when no zone is currently selected.
+     */
+    _deleteSelected() {
+        var _a, _b, _c, _d, _f, _g, _h, _j;
+        this._pushHistory();
+        const selectedZone = (_a = this._zoneEditor) === null || _a === void 0 ? void 0 : _a.getSelectedZoneId();
+        if (selectedZone) {
+            (_b = this._zoneEditor) === null || _b === void 0 ? void 0 : _b.deleteZone(selectedZone);
+            this._config.zones = (_d = (_c = this._zoneEditor) === null || _c === void 0 ? void 0 : _c.getZoneConfigs()) !== null && _d !== void 0 ? _d : [];
+        }
+        else {
+            (_f = this._furnitureLayer) === null || _f === void 0 ? void 0 : _f.deleteSelected();
+            this._config.furniture = (_h = (_g = this._furnitureLayer) === null || _g === void 0 ? void 0 : _g.getFurnitureConfigs()) !== null && _h !== void 0 ? _h : [];
+        }
+        this._persistConfig();
+        (_j = this._radarCanvas) === null || _j === void 0 ? void 0 : _j.markDirty();
+        this._renderDOM();
+        this._setupCanvas();
+    }
+    /**
+     * localStorage key for persisting card config, scoped by device name.
+     */
+    _storageKey() {
+        return `ld2450_card_${this._config.device_name}`;
+    }
+    /**
+     * Persist the current card configuration to localStorage so that
+     * zones, furniture, and settings survive page refreshes.
+     * Debounced to avoid excessive writes during rapid changes (e.g. slider input).
+     */
+    _persistConfig() {
+        if (this._persistTimer !== null)
+            clearTimeout(this._persistTimer);
+        this._persistTimer = setTimeout(() => {
+            try {
+                const toStore = {
+                    zones: this._config.zones,
+                    furniture: this._config.furniture,
+                    color_scheme: this._config.color_scheme,
+                    sensor_position: this._config.sensor_position,
+                    max_range: this._config.max_range,
+                    fov_angle: this._config.fov_angle,
+                    show_grid: this._config.show_grid,
+                    show_sweep: this._config.show_sweep,
+                    show_trails: this._config.show_trails,
+                    trail_length: this._config.trail_length,
+                };
+                localStorage.setItem(this._storageKey(), JSON.stringify(toStore));
+            }
+            catch (_e) {
+                // localStorage may be full or unavailable — not fatal
+            }
+        }, 300);
+    }
+    /**
+     * Load previously persisted card config from localStorage.
+     * Validates the parsed data before returning it.
+     */
+    _loadPersistedConfig() {
+        try {
+            const raw = localStorage.getItem(this._storageKey());
+            if (!raw)
+                return null;
+            const parsed = JSON.parse(raw);
+            // Basic validation: must be a non-null object
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+                return null;
+            // Validate zones array if present
+            if (parsed.zones !== undefined && !Array.isArray(parsed.zones))
+                return null;
+            // Validate furniture array if present
+            if (parsed.furniture !== undefined && !Array.isArray(parsed.furniture))
+                return null;
+            return parsed;
+        }
+        catch (_e) {
+            // ignore parse errors or corrupted data
+        }
+        return null;
     }
     _escapeHtml(str) {
         return str
